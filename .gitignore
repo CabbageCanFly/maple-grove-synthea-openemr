@@ -42,3 +42,6 @@ Thumbs.db
 
 # Local OpenEMR credentials
 /config/openemr.env
+
+# Generated local setup files
+/.local/
