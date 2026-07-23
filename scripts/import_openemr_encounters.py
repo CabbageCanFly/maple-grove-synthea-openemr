@@ -355,6 +355,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--facility-id", type=int, default=DEFAULT_FACILITY_ID)
     parser.add_argument("--pc-catid", type=int, default=DEFAULT_PC_CATID)
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=100,
+        help="Print progress every N processed encounters; use 0 to disable.",
+    )
     return parser.parse_args()
 
 
@@ -366,6 +372,8 @@ def main() -> int:
             raise RuntimeError("--limit must be at least 1.")
         if args.offset < 0:
             raise RuntimeError("--offset cannot be negative.")
+        if args.progress_every < 0:
+            raise RuntimeError("--progress-every cannot be negative.")
 
         encounters = read_csv_by_id(args.encounters_csv.resolve())
         organizations = read_csv_by_id(args.organizations_csv.resolve())
@@ -503,6 +511,20 @@ def main() -> int:
         created = 0
         skipped = 0
         failed = 0
+        existing_encounters_by_patient: dict[str, list[dict[str, Any]]] = {}
+
+        def print_progress() -> None:
+            processed = created + skipped + failed
+            if args.progress_every == 0:
+                return
+            if (
+                processed % args.progress_every == 0
+                or processed == len(selected_rows)
+            ):
+                print(
+                    f"PROGRESS {processed}/{len(selected_rows)} "
+                    f"(created={created}, skipped={skipped}, failed={failed})"
+                )
 
         for row in selected_rows:
             source_encounter_id = clean(row.get("Id"))
@@ -523,20 +545,24 @@ def main() -> int:
             if not patient_uuid or patient_uuid == "created":
                 print(f"FAILED {label}: patient mapping has no UUID", file=sys.stderr)
                 failed += 1
+                print_progress()
                 continue
 
             if source_encounter_id in encounter_map:
                 print(f"SKIP already imported: {label}")
                 skipped += 1
+                print_progress()
                 continue
 
             try:
-                existing = api_get_records(
-                    openemr["api_base_url"],
-                    token,
-                    f"patient/{patient_uuid}/encounter",
-                    {"_count": 1000, "_offset": 0},
-                )
+                if patient_uuid not in existing_encounters_by_patient:
+                    existing_encounters_by_patient[patient_uuid] = api_get_records(
+                        openemr["api_base_url"],
+                        token,
+                        f"patient/{patient_uuid}/encounter",
+                        {"_count": 1000, "_offset": 0},
+                    )
+                existing = existing_encounters_by_patient[patient_uuid]
                 matched = next(
                     (
                         item
@@ -555,6 +581,7 @@ def main() -> int:
                     save_json(ENCOUNTER_MAP_FILE, encounter_map)
                     print(f"SKIP found existing encounter: {label}")
                     skipped += 1
+                    print_progress()
                     continue
 
                 payload = build_payload(
@@ -573,6 +600,7 @@ def main() -> int:
             except (RuntimeError, ValueError, requests.RequestException) as error:
                 print(f"FAILED {label}: {error}", file=sys.stderr)
                 failed += 1
+                print_progress()
                 continue
 
             encounter_id = (
@@ -598,6 +626,7 @@ def main() -> int:
             save_json(ENCOUNTER_MAP_FILE, encounter_map)
             print(f"CREATED {label}: {encounter_uuid or encounter_id}")
             created += 1
+            print_progress()
 
         print()
         print("Encounter import summary")
