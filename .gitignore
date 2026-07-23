@@ -34,3 +34,11 @@ Thumbs.db
 /dist/
 /synthea-customizations/
 /tools/synthea-canada-source/
+
+# Python
+**/__pycache__/
+*.py[cod]
+.venv/
+
+# Local OpenEMR credentials
+/config/openemr.env
