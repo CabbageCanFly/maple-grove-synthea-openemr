@@ -17,13 +17,45 @@ from detect_openemr import detect
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_FILE = ROOT / ".local" / "openemr-client.json"
 CLIENT_NAME = "Maple Grove Synthea Importer"
-SCOPES = "openid api:oemr user/patient.crs"
+def scopes_for_version(major_version: int) -> str:
+    """Return equivalent minimum scopes for OpenEMR 7 or 8."""
+
+    if major_version >= 8:
+        return (
+            "openid api:oemr "
+            "user/patient.crs "
+            "user/encounter.crs "
+            "user/facility.crs "
+            "user/practitioner.rs"
+        )
+
+    if major_version == 7:
+        return (
+            "openid api:oemr "
+            "user/patient.read user/patient.write "
+            "user/encounter.read user/encounter.write "
+            "user/facility.read user/facility.write "
+            "user/practitioner.read"
+        )
+
+    raise RuntimeError(
+        f"Unsupported OpenEMR major version: {major_version}"
+    )
+
 
 
 def main() -> int:
     try:
         openemr = detect()
         base_url = openemr["base_url"]
+        major_version = openemr.get("major_version")
+
+        if not isinstance(major_version, int):
+            raise RuntimeError(
+                "The OpenEMR major version could not be detected."
+            )
+
+        scopes = scopes_for_version(major_version)
 
         if openemr["scheme"] != "https":
             raise RuntimeError(
@@ -75,7 +107,7 @@ def main() -> int:
                 f"{base_url}/maple-grove/oauth/callback"
             ],
             "token_endpoint_auth_method": "client_secret_post",
-            "scope": SCOPES,
+            "scope": scopes,
         }
 
         response = requests.post(
@@ -105,7 +137,7 @@ def main() -> int:
             "client_name": CLIENT_NAME,
             "client_id": client_id,
             "client_secret": client_secret,
-            "scope": SCOPES,
+            "scope": scopes,
             "base_url": base_url,
             "issuer": discovery.get("issuer"),
             "registration_endpoint": registration_endpoint,
@@ -126,7 +158,7 @@ def main() -> int:
         print("OpenEMR OAuth client registered")
         print(f"  Client name: {CLIENT_NAME}")
         print(f"  Client ID: {client_id}")
-        print(f"  Requested scope: {SCOPES}")
+        print(f"  Requested scope: {scopes}")
         print(f"  Credentials saved privately: {CLIENT_FILE}")
         print("  Client secret was not printed.")
 
