@@ -235,9 +235,9 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: encounters
+## Current development phase: conditions
 
-The next implemented resource is `encounters.csv`.
+Encounter importing is complete. The next planned resource is `conditions.csv`.
 
 The uploaded working sample contains:
 
@@ -363,6 +363,53 @@ the pilot response.
 13. Test 10 encounters across multiple classes.
 14. Import the remaining encounters in resumable batches.
 15. Persist Synthea encounter UUID → OpenEMR encounter UUID/ID mappings.
+
+<!-- BEGIN ENCOUNTER-IMPLEMENTATION-STATUS -->
+
+## Encounter importer implementation status
+
+Completed on 2026-07-23.
+
+Full dataset result:
+
+- Source encounters: 5,384
+- Created: 5,107
+- Skipped as already imported: 277
+- Failed: 0
+
+Implemented behavior:
+
+- imports through the OpenEMR Standard REST API;
+- persists patient, organization, provider, and encounter mappings under `.local/`;
+- maps source organizations to Maple Grove Family Health Centre, facility ID 4;
+- maps Synthea providers deterministically to the manual provider pool;
+- supports dry runs, limits, offsets, class filters, progress reporting,
+  duplicate protection, and safe resumability.
+
+Validated class mappings:
+
+- ambulatory, wellness, outpatient, urgentcare -> `AMB`
+- emergency -> `EMER`
+- inpatient, snf, hospice -> `IMP`
+- home -> `HH`
+- virtual -> `VR`
+
+The importer currently uses `pc_catid=9` as a visit-category fallback.
+The clinical encounter class is preserved separately through `class_code`.
+Do not modify shared calendar categories unless the project team agrees.
+
+Appointments and encounters remain separate. Historical Synthea encounters are
+not reconstructed as historical calendar appointments because the export lacks a
+complete appointment scheduling lifecycle. Future synthetic appointments may be
+created separately for calendar and check-in demonstrations.
+
+The final student workflow must hide the resource-specific development commands
+behind a concise setup command and an orchestrated import command. It should offer
+a fast representative demo import by default and an explicit full-data option.
+
+Next planned resource: `conditions.csv`.
+
+<!-- END ENCOUNTER-IMPLEMENTATION-STATUS -->
 
 ## Wider Synthea CSV import order
 
