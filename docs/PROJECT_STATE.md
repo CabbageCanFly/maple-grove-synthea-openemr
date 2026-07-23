@@ -109,3 +109,13 @@ authentication works.
 - Local students use automatically detected OpenEMR 8 Docker environments.
 - The shared AWS target uses OpenEMR 7 and does not require student Docker access.
 
+## OAuth and API status
+
+- Standard REST API is enabled manually in Administration → Config → Connectors.
+- OAuth2 Password Grant is enabled for the local synthetic/demo environment.
+- Local OAuth site address is https://localhost:9300.
+- OAuth client registration is automated.
+- After registration, the student must open Administration → System → API Clients
+  and enable the Maple Grove Synthea Importer once.
+- Authentication and the read-only patient API request have been verified.
+- Access tokens are not printed or saved.
