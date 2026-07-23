@@ -26,3 +26,11 @@ Thumbs.db
 .vscode/
 .idea/
 .obsidian/
+
+# Locally built GitHub Release files
+/dist/
+
+# Local Synthea build and reproducibility working files
+/dist/
+/synthea-customizations/
+/tools/synthea-canada-source/
