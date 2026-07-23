@@ -82,10 +82,20 @@ python3 scripts/setup_project.py
 python3 scripts/generate_gta_patients.py
 python3 scripts/import_openemr.py
 
+## Latest completed progress
+
+- Local Docker container names and ports are detected automatically.
+- The actual OpenEMR version is read from version.php, so `latest` images work.
+- Local HTTPS is available at https://localhost:9300.
+- The Standard REST API and local test-only password grant were enabled manually.
+- FHIR, FHIR system scopes, and Patient Portal APIs remain disabled.
+- Direct SQL configuration was rejected as the normal student workflow.
+
 ## Next development step
 
-Build automatic local Docker/OpenEMR discovery, followed by a harmless
-API connection test. Do not import patients until authentication works.
+Register a local OAuth client, obtain an access token, and perform an
+authenticated read-only patient request. Do not import patients until
+authentication works.
 
 ## OpenEMR discovery rules
 
