@@ -1,0 +1,28 @@
+# Generated Synthea output
+output/*
+!output/README.md
+
+# Downloaded tools, cloned source trees, archives, and built JAR files
+tools/*
+!tools/README.md
+
+# Python environments and cache files
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets and local configuration
+.env
+*.env
+import-state/
+*.log
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+.obsidian/
