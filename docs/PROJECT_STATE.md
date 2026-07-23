@@ -119,3 +119,13 @@ authentication works.
   and enable the Maple Grove Synthea Importer once.
 - Authentication and the read-only patient API request have been verified.
 - Access tokens are not printed or saved.
+
+## Patient importer status
+
+- OAuth authentication was successfully verified against local OpenEMR 8.
+- A Synthea patient was created through the Standard REST API.
+- The patient count increased from 3 to 4.
+- Re-importing the same Synthea patient safely skipped it.
+- Current importer supports basic patient demographics, dry runs, limits,
+  local import tracking, and duplicate protection.
+- Bulk import has not yet been approved or tested.
