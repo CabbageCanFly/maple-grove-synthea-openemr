@@ -171,6 +171,70 @@ current next step.
 
 <!-- END COMPLETED-MILESTONE-HISTORY -->
 
+<!-- BEGIN ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
+
+## Environment and provider compatibility notes
+
+### Runtime and dependency versions
+
+The student workflow should use a project-local Python virtual environment:
+
+- create it as `.venv`;
+- activate it before installing or running importer dependencies;
+- install dependencies from `requirements_openemr_import.txt`;
+- run project commands using `python3`.
+
+The importer currently requires Python 3.10 or newer. The Synthea generator
+uses Java 17.
+
+A virtual environment isolates project packages but does not guarantee exact
+versions when the requirements file contains version ranges. During active
+development, compatible version ranges are acceptable. Before the final
+student release, generate and test an exact dependency lock file from a clean
+virtual environment.
+
+Currently verified targets:
+
+- local OpenEMR 8.0.0.3;
+- shared AWS OpenEMR 7, with its exact patch version still to be recorded.
+
+Version-specific OAuth scopes and API differences must remain isolated behind
+compatibility code.
+
+### Canadian demo provider identifiers
+
+The manually created OpenEMR provider accounts did not appear through the
+Practitioner API until their NPI fields were populated in the local OpenEMR
+8.0.0.3 environment.
+
+This project represents a Canadian Ontario clinic, so its fictional providers
+do not have real United States National Provider Identifiers. To satisfy the
+OpenEMR compatibility requirement, use unique ten-digit synthetic placeholder
+values such as:
+
+- `0000000001`
+- `0000000002`
+- `0000000003`
+- `0000000004`
+
+These values are synthetic compatibility placeholders only. Never use a real
+provider's NPI.
+
+Use the OpenEMR State License Number field for synthetic Ontario professional
+registration identifiers, for example:
+
+- physicians: `CPSO-DEMO-0001`
+- nurse practitioners: `CNO-DEMO-0003`
+
+All provider identifiers must be clearly synthetic and unique within the demo.
+
+Provider accounts are created manually because creating hundreds of OpenEMR
+login accounts from Synthea is neither practical nor desirable. The importer
+discovers the small pool of active, authorized demo providers and
+deterministically maps Synthea provider UUIDs onto that pool.
+
+<!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
+
 ## Current development phase: encounters
 
 The next implemented resource is `encounters.csv`.
