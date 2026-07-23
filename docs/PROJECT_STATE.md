@@ -86,3 +86,16 @@ python3 scripts/import_openemr.py
 
 Build automatic local Docker/OpenEMR discovery, followed by a harmless
 API connection test. Do not import patients until authentication works.
+
+## OpenEMR discovery rules
+
+- Never assume the Docker image tag contains the OpenEMR version.
+- Images tagged `latest` must be supported.
+- Docker image tags are hints only.
+- For local Docker, read the actual version from OpenEMR's version.php.
+- Automatically detect container names and published ports.
+- Prefer published HTTPS port 443 over HTTP port 80.
+- Recognize MariaDB, MySQL, and mysql-xtrabackup database containers.
+- Local students use automatically detected OpenEMR 8 Docker environments.
+- The shared AWS target uses OpenEMR 7 and does not require student Docker access.
+
