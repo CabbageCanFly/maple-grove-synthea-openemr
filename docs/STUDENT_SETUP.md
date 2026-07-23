@@ -105,7 +105,7 @@ Most students should not rebuild Synthea from source.
 4. Download:
 
 ```text
-synthea-gta-maple-grove-v0.1.0.jar
+synthea-gta-maple-grove-v0.1.1.jar
 ```
 
 5. Move the downloaded JAR directly into the project folder:
@@ -119,7 +119,7 @@ The final location should look like:
 ```text
 maple-grove-synthea-openemr/
 └── tools/
-    └── synthea-gta-maple-grove-v0.1.0.jar
+    └── synthea-gta-maple-grove-v0.1.1.jar
 ```
 
 Do not commit the JAR through GitHub Desktop.
