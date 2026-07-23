@@ -83,6 +83,37 @@ Completed locally against OpenEMR 8:
 The AWS OpenEMR 7 target must use the same importer where the Standard API is
 compatible, but it must not depend on Docker access.
 
+<!-- BEGIN OAUTH-CLIENT-NAMING-RULES -->
+
+### OAuth client naming and identification
+
+OpenEMR's API Clients screen primarily displays the client name. Generated
+client IDs are not convenient for humans to distinguish, and the interface
+does not clearly show when otherwise identical clients were registered.
+
+Every newly registered Maple Grove OAuth client must therefore include a
+human-readable timestamp in its client name.
+
+Example:
+
+`Maple Grove Synthea Importer 2026-07-23 17:42 EDT`
+
+The registration script generates the timestamp automatically using the local
+system time and timezone.
+
+When replacing a client because scopes changed:
+
+1. preserve or archive the previous local credential file;
+2. register a newly timestamped client;
+3. enable the newest client in OpenEMR;
+4. verify that the saved local client name matches the enabled entry;
+5. disable obsolete clients when they are no longer needed.
+
+Do not rely on visually comparing generated client ID strings to identify the
+correct client.
+
+<!-- END OAUTH-CLIENT-NAMING-RULES -->
+
 ## Patient importer status
 
 Completed functionality:
@@ -94,7 +125,7 @@ Completed functionality:
 - Local import tracking and duplicate protection exist
 
 The patient CSV is the only Synthea clinical dataset implemented so far.
-The exact most recent bulk-test count should be recorded after the next run.
+The current local patient mapping contains 105 Synthea patient UUIDs mapped to OpenEMR patient identifiers.
 
 <!-- BEGIN COMPLETED-MILESTONE-HISTORY -->
 

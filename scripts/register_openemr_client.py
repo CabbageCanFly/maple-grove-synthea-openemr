@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import os
 import sys
@@ -16,7 +17,15 @@ from detect_openemr import detect
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_FILE = ROOT / ".local" / "openemr-client.json"
-CLIENT_NAME = "Maple Grove Synthea Importer"
+CLIENT_NAME_PREFIX = "Maple Grove Synthea Importer"
+
+
+def make_client_name() -> str:
+    """Return a human-readable unique OAuth client name."""
+    timestamp = datetime.now().astimezone().strftime(
+        "%Y-%m-%d %H:%M %Z"
+    )
+    return f"{CLIENT_NAME_PREFIX} {timestamp}"
 def scopes_for_version(major_version: int) -> str:
     """Return equivalent minimum scopes for OpenEMR 7 or 8."""
 
@@ -26,7 +35,8 @@ def scopes_for_version(major_version: int) -> str:
             "user/patient.crs "
             "user/encounter.crs "
             "user/facility.crs "
-            "user/practitioner.rs"
+            "user/practitioner.rs "
+            "user/list.rs"
         )
 
     if major_version == 7:
@@ -35,7 +45,8 @@ def scopes_for_version(major_version: int) -> str:
             "user/patient.read user/patient.write "
             "user/encounter.read user/encounter.write "
             "user/facility.read user/facility.write "
-            "user/practitioner.read"
+            "user/practitioner.read "
+            "user/list.read"
         )
 
     raise RuntimeError(
@@ -56,6 +67,7 @@ def main() -> int:
             )
 
         scopes = scopes_for_version(major_version)
+        client_name = make_client_name()
 
         if openemr["scheme"] != "https":
             raise RuntimeError(
@@ -102,7 +114,7 @@ def main() -> int:
 
         registration = {
             "application_type": "private",
-            "client_name": CLIENT_NAME,
+            "client_name": client_name,
             "redirect_uris": [
                 f"{base_url}/maple-grove/oauth/callback"
             ],
@@ -134,7 +146,7 @@ def main() -> int:
             )
 
         saved = {
-            "client_name": CLIENT_NAME,
+            "client_name": client_name,
             "client_id": client_id,
             "client_secret": client_secret,
             "scope": scopes,
@@ -156,7 +168,7 @@ def main() -> int:
             pass
 
         print("OpenEMR OAuth client registered")
-        print(f"  Client name: {CLIENT_NAME}")
+        print(f"  Client name: {client_name}")
         print(f"  Client ID: {client_id}")
         print(f"  Requested scope: {scopes}")
         print(f"  Credentials saved privately: {CLIENT_FILE}")
