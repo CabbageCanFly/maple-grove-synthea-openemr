@@ -36,7 +36,7 @@ def scopes_for_version(major_version: int) -> str:
             "user/encounter.crs "
             "user/facility.crs "
             "user/practitioner.rs "
-            "user/list.rs"
+            "user/list.rs user/medical_problem.crs"
         )
 
     if major_version == 7:
@@ -45,7 +45,7 @@ def scopes_for_version(major_version: int) -> str:
             "user/patient.read user/patient.write "
             "user/encounter.read user/encounter.write "
             "user/facility.read user/facility.write "
-            "user/practitioner.read "
+            "user/practitioner.read user/medical_problem.read user/medical_problem.write "
             "user/list.read"
         )
 
