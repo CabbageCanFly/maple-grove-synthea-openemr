@@ -724,6 +724,45 @@ Next planned resource: `immunizations.csv`.
 
 <!-- END PROCEDURE-IMPORT-DECISION -->
 
+<!-- BEGIN UNSUPPORTED-CLINICAL-RESOURCES -->
+
+## Clinical resources without writable OpenEMR APIs
+
+The following Synthea resources are present in the current validation dataset but
+cannot be created through the enabled OpenEMR 8.0.0.3 Standard REST or FHIR APIs.
+
+| Resource | Source rows | Installed API capability | Decision |
+|---|---:|---|---|
+| Procedures | 14,309 | Standard and FHIR `GET` only | Audited; creation unsupported |
+| Immunizations | 1,538 | Standard and FHIR `GET` only | Creation unsupported |
+| Care plans | 366 | FHIR `GET` only | Creation unsupported |
+| Devices | 510 | FHIR `GET` only | Creation unsupported |
+| Imaging studies | 456 | DiagnosticReport FHIR `GET` only | Creation unsupported; not an exact imaging-study mapping |
+| Supplies | 2,360 | No matching route | Creation unsupported |
+
+The project will not redirect these records into unrelated OpenEMR features such as
+procedure orders, billing entries, encounter notes, or arbitrary documents merely to
+claim import coverage. Direct database writes and custom server modules are outside
+the portable Standard/FHIR API workflow.
+
+These resources remain valuable as documented source coverage. Future OpenEMR
+versions may be reassessed by examining their installed Swagger specification.
+
+The implemented clinical import scope currently includes:
+
+- patients;
+- facilities and provider mappings used by encounters;
+- encounters;
+- conditions;
+- allergies;
+- medications;
+- supported vital signs.
+
+The next development phase is final importer orchestration, student workflow
+simplification, and validation of the shared AWS OpenEMR 7 target.
+
+<!-- END UNSUPPORTED-CLINICAL-RESOURCES -->
+
 ## Wider Synthea CSV import order
 
 Dependency-oriented target order:

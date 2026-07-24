@@ -75,3 +75,25 @@ An OpenEMR response should count as successful only after checking:
 4. the local map checkpoint written immediately after creation.
 
 Runtime behavior takes precedence over assumptions based solely on Swagger examples.
+
+<!-- BEGIN READ-ONLY-RESOURCE-NOTES -->
+
+## Read-only or unavailable clinical resource endpoints
+
+Local OpenEMR 8.0.0.3 capability checks found:
+
+- procedures: Standard and FHIR `GET` only;
+- immunizations: Standard and FHIR `GET` only;
+- care plans: FHIR `GET` only;
+- devices: FHIR `GET` only;
+- diagnostic reports: FHIR `GET` only;
+- supplies: no matching route.
+
+These findings apply to the installed local version and must not be assumed for
+another OpenEMR release without checking its installed Swagger specification.
+
+No importer should create substitute procedure orders, billing records, notes, or
+documents for these source resources. Such substitutions would change the clinical
+meaning of the Synthea data.
+
+<!-- END READ-ONLY-RESOURCE-NOTES -->
