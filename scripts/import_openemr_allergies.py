@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime, timezone
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -158,10 +160,60 @@ def primary_reaction(
     return option_id, severity, fallback_reason
 
 
-def build_payload(row: dict[str, str]) -> dict[str, Any]:
+def openemr_allergy_date(
+    value: Any,
+    major_version: int,
+) -> str:
+    """Format an allergy date for the selected OpenEMR major version."""
+    text = clean(value)
+
+    if not text:
+        return ""
+
+    if re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", text):
+        date_text = text
+        datetime_text = f"{text} 00:00:00"
+    else:
+        normalized = text.replace("Z", "+00:00")
+
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported Synthea allergy date/time: {text}"
+            ) from exc
+
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(
+                tzinfo=None
+            )
+
+        date_text = parsed.strftime("%Y-%m-%d")
+        datetime_text = parsed.replace(
+            microsecond=0
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # OpenEMR 7 allergy validation expects a DateTime value.
+    # OpenEMR 8.0.0.3+ accepts the documented date-only format.
+    if major_version >= 8:
+        return date_text
+
+    return datetime_text
+
+
+def build_payload(
+    row: dict[str, str],
+    major_version: int,
+) -> dict[str, Any]:
     title = clean(row.get("DESCRIPTION"))
-    start = clean(row.get("START"))
-    stop = clean(row.get("STOP"))
+    start = openemr_allergy_date(
+        row.get("START"),
+        major_version,
+    )
+    stop = openemr_allergy_date(
+        row.get("STOP"),
+        major_version,
+    )
     code = clean(row.get("CODE"))
     system = clean(row.get("SYSTEM")) or "Unknown"
 
@@ -463,10 +515,21 @@ def main() -> int:
                 f"First missing ID: {missing_encounters[0]}"
             )
 
+        openemr = detect()
+        major_version = openemr.get("major_version")
+
+        if not isinstance(major_version, int):
+            raise RuntimeError(
+                "The OpenEMR major version could not be detected."
+            )
+
         first = selected_rows[0]
         first_patient_id = clean(first.get("PATIENT"))
         first_patient = patient_map[first_patient_id]
-        first_payload = build_payload(first)
+        first_payload = build_payload(
+            first,
+            major_version,
+        )
 
         print(f"Allergies CSV: {args.allergies_csv.resolve()}")
         print(f"Allergy rows available: {len(rows)}")
@@ -605,7 +668,10 @@ def main() -> int:
                     print_progress()
                     continue
 
-                payload = build_payload(row)
+                payload = build_payload(
+                    row,
+                    major_version,
+                )
                 _, _, source_reaction_fallback = primary_reaction(row)
                 target_reaction_fallback = ""
 

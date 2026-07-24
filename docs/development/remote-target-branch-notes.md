@@ -550,3 +550,21 @@ Before every commit:
 git status --short
 git diff --cached
 ```
+
+## OpenEMR 7.0.2 Allergy Limitation
+
+OpenEMR 7.0.2 creates allergy records through the Standard REST API but does
+not persist the `reaction` or `severity_al` request fields.
+
+This was confirmed by:
+
+- sending valid reaction and severity option IDs;
+- verifying those options exist in the OpenEMR lists;
+- testing both POST and PUT requests;
+- checking the resulting `lists` database records directly.
+
+The allergy title, patient association, start date, and active status import
+successfully. Reaction and severity therefore remain blank on OpenEMR 7.0.2.
+
+OpenEMR 8 imports these fields correctly. No server patch is required for the
+school-project workflow.
