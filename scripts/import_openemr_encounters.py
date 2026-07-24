@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Import Synthea encounters through the OpenEMR Standard API.
 
-Initial strategy:
-- every Synthea organization maps to the existing Maple Grove facility;
-- Synthea providers map deterministically to the manually created provider pool;
+Target strategy:
+- select an existing OpenEMR facility safely instead of assuming a numeric ID;
+- map Synthea providers deterministically to active authorized providers at that facility;
 - mappings and imported encounter identifiers are stored under .local/.
 """
 
@@ -36,7 +36,7 @@ ORGANIZATION_MAP_FILE = ROOT / ".local/organization-import-map.json"
 PROVIDER_MAP_FILE = ROOT / ".local/provider-import-map.json"
 ENCOUNTER_MAP_FILE = ROOT / ".local/encounter-import-map.json"
 
-DEFAULT_FACILITY_ID = 4
+PREFERRED_FACILITY_NAME = "Maple Grove Family Health Centre"
 DEFAULT_PC_CATID = 9
 DEFAULT_TIMEZONE = "America/Toronto"
 
@@ -191,24 +191,92 @@ def choose_provider(
     return provider_pool[index]
 
 
+def as_enabled(value: Any) -> bool:
+    """Interpret common OpenEMR boolean representations."""
+
+    if isinstance(value, bool):
+        return value
+
+    normalized = clean(str(value)).casefold()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def practitioner_pool_for_facility(
+    practitioners: list[dict[str, Any]],
+    facility_id: Any,
+    provider_usernames: set[str],
+    provider_username_prefix: str | None,
+) -> list[dict[str, Any]]:
+    """Return active authorized non-admin providers for one facility."""
+
+    unique: dict[str, dict[str, Any]] = {}
+
+    for practitioner in practitioners:
+        key = practitioner.get("uuid") or practitioner.get("id")
+        if key is not None:
+            unique[str(key)] = practitioner
+
+    requested = {value.casefold() for value in provider_usernames}
+    prefix = clean(provider_username_prefix).casefold()
+
+    result: list[dict[str, Any]] = []
+
+    for practitioner in unique.values():
+        username = clean(str(practitioner.get("username")))
+        username_folded = username.casefold()
+
+        if not as_enabled(practitioner.get("active")):
+            continue
+        if not as_enabled(practitioner.get("authorized")):
+            continue
+        if str(practitioner.get("facility_id")) != str(facility_id):
+            continue
+        if not username:
+            continue
+
+        if requested:
+            if username_folded not in requested:
+                continue
+        else:
+            if username_folded == "admin":
+                continue
+            if prefix and not username_folded.startswith(prefix):
+                continue
+
+        result.append(practitioner)
+
+    return sorted(
+        result,
+        key=lambda item: (
+            int(item.get("id") or 0),
+            clean(str(item.get("username"))).casefold(),
+        ),
+    )
+
+
+def facility_label(facility: dict[str, Any]) -> str:
+    return (
+        f"{clean(str(facility.get('name'))) or '(unnamed)'} "
+        f"(ID {facility.get('id')})"
+    )
+
+
 def get_target_resources(
     api_base_url: str,
     token: str,
-    facility_id: int,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    facility_id: int | None,
+    facility_name: str | None,
+    provider_usernames: set[str],
+    provider_username_prefix: str | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+    """Select a safe facility and provider pool from the target OpenEMR."""
+
     facilities = api_get_records(
         api_base_url,
         token,
         "facility",
         {"_count": 1000, "_offset": 0},
     )
-    facility = next(
-        (item for item in facilities if str(item.get("id")) == str(facility_id)),
-        None,
-    )
-    if facility is None:
-        raise RuntimeError(f"OpenEMR facility ID {facility_id} was not found.")
-
     practitioners = api_get_records(
         api_base_url,
         token,
@@ -216,30 +284,149 @@ def get_target_resources(
         {"_count": 1000, "_offset": 0},
     )
 
-    unique: dict[str, dict[str, Any]] = {}
-    for practitioner in practitioners:
-        key = practitioner.get("uuid") or practitioner.get("id")
+    unique_facilities: dict[str, dict[str, Any]] = {}
+    for facility in facilities:
+        key = facility.get("id")
         if key is not None:
-            unique[str(key)] = practitioner
+            unique_facilities[str(key)] = facility
 
-    provider_pool = sorted(
-        (
-            practitioner
-            for practitioner in unique.values()
-            if int(practitioner.get("active") or 0) == 1
-            and int(practitioner.get("authorized") or 0) == 1
-            and str(practitioner.get("facility_id")) == str(facility_id)
-            and clean(str(practitioner.get("username"))).startswith("provider")
+    available = sorted(
+        unique_facilities.values(),
+        key=lambda item: (
+            int(item.get("id") or 0),
+            clean(str(item.get("name"))).casefold(),
         ),
-        key=lambda item: int(item.get("id") or 0),
+    )
+
+    if not available:
+        raise RuntimeError("OpenEMR returned no facilities.")
+
+    selected: dict[str, Any] | None = None
+    selection_strategy = ""
+
+    if facility_id is not None:
+        selected = next(
+            (
+                item
+                for item in available
+                if str(item.get("id")) == str(facility_id)
+            ),
+            None,
+        )
+        if selected is None:
+            choices = ", ".join(facility_label(item) for item in available)
+            raise RuntimeError(
+                f"OpenEMR facility ID {facility_id} was not found. "
+                f"Available facilities: {choices}"
+            )
+        selection_strategy = "explicit-facility-id"
+
+    elif clean(facility_name):
+        wanted = clean(facility_name).casefold()
+        matches = [
+            item
+            for item in available
+            if clean(str(item.get("name"))).casefold() == wanted
+        ]
+        if len(matches) != 1:
+            choices = ", ".join(facility_label(item) for item in available)
+            raise RuntimeError(
+                f"Expected exactly one facility named {facility_name!r}; "
+                f"found {len(matches)}. Available facilities: {choices}"
+            )
+        selected = matches[0]
+        selection_strategy = "explicit-facility-name"
+
+    else:
+        preferred = [
+            item
+            for item in available
+            if clean(str(item.get("name"))).casefold()
+            == PREFERRED_FACILITY_NAME.casefold()
+        ]
+
+        preferred_with_providers = [
+            item
+            for item in preferred
+            if practitioner_pool_for_facility(
+                practitioners,
+                item.get("id"),
+                provider_usernames,
+                provider_username_prefix,
+            )
+        ]
+
+        if len(preferred_with_providers) == 1:
+            selected = preferred_with_providers[0]
+            selection_strategy = "preferred-maple-grove-facility"
+        else:
+            eligible = [
+                item
+                for item in available
+                if practitioner_pool_for_facility(
+                    practitioners,
+                    item.get("id"),
+                    provider_usernames,
+                    provider_username_prefix,
+                )
+            ]
+
+            if len(eligible) == 1:
+                selected = eligible[0]
+                selection_strategy = "only-facility-with-eligible-providers"
+            elif not eligible:
+                choices = ", ".join(
+                    facility_label(item) for item in available
+                )
+                raise RuntimeError(
+                    "No facility has an eligible provider pool. Create at least "
+                    "one active, authorized non-admin provider assigned to a "
+                    "facility. The provider must be visible through the "
+                    f"Practitioner API. Available facilities: {choices}"
+                )
+            else:
+                choices = ", ".join(
+                    facility_label(item) for item in eligible
+                )
+                raise RuntimeError(
+                    "Multiple facilities have eligible providers and no safe "
+                    "automatic choice is possible. Name one facility "
+                    f"{PREFERRED_FACILITY_NAME!r}, or run the encounter importer "
+                    "with --facility-id/--facility-name. Eligible facilities: "
+                    + choices
+                )
+
+    assert selected is not None
+
+    provider_pool = practitioner_pool_for_facility(
+        practitioners,
+        selected.get("id"),
+        provider_usernames,
+        provider_username_prefix,
     )
 
     if not provider_pool:
+        filter_note = ""
+        if provider_usernames:
+            filter_note = (
+                " Requested usernames: "
+                + ", ".join(sorted(provider_usernames))
+                + "."
+            )
+        elif clean(provider_username_prefix):
+            filter_note = (
+                " Requested username prefix: "
+                + clean(provider_username_prefix)
+                + "."
+            )
+
         raise RuntimeError(
-            f"No active authorized provider accounts were found at facility {facility_id}."
+            "No active authorized provider accounts were found at "
+            f"{facility_label(selected)}.{filter_note} "
+            "Create or enable at least one provider assigned to this facility."
         )
 
-    return facility, provider_pool
+    return selected, provider_pool, selection_strategy
 
 
 def ensure_source_mappings(
@@ -267,17 +454,45 @@ def ensure_source_mappings(
         if source_provider is None:
             raise RuntimeError(f"Encounter references missing provider: {provider_id}")
 
-        if organization_id not in organization_map:
+        existing_organization = organization_map.get(organization_id)
+        if existing_organization is not None:
+            mapped_facility_id = existing_organization.get(
+                "openemr_facility_id"
+            )
+            if str(mapped_facility_id) != str(facility.get("id")):
+                raise RuntimeError(
+                    "Existing organization mapping targets OpenEMR facility "
+                    f"{mapped_facility_id}, but the selected facility is "
+                    f"{facility.get('id')}. Use the original facility or start "
+                    "with fresh target-specific .local mapping state."
+                )
+        else:
             organization_map[organization_id] = {
                 "source_name": clean(source_organization.get("NAME")),
                 "source_city": clean(source_organization.get("CITY")),
                 "openemr_facility_id": facility.get("id"),
                 "openemr_facility_uuid": facility.get("uuid"),
                 "openemr_facility_name": facility.get("name"),
-                "strategy": "map-to-existing-maple-grove-facility",
+                "strategy": "map-to-selected-existing-facility",
             }
 
-        if provider_id not in provider_map:
+        existing_provider = provider_map.get(provider_id)
+        provider_ids = {
+            str(item.get("id"))
+            for item in provider_pool
+            if item.get("id") is not None
+        }
+
+        if existing_provider is not None:
+            mapped_provider_id = existing_provider.get("openemr_provider_id")
+            if str(mapped_provider_id) not in provider_ids:
+                raise RuntimeError(
+                    "Existing provider mapping targets OpenEMR provider "
+                    f"{mapped_provider_id}, which is not in the selected "
+                    "provider pool. Use the original provider setup or start "
+                    "with fresh target-specific .local mapping state."
+                )
+        else:
             target = choose_provider(provider_id, provider_pool)
             provider_map[provider_id] = {
                 "source_name": clean(source_provider.get("NAME")),
@@ -294,7 +509,7 @@ def ensure_source_mappings(
                     )
                     if part
                 ),
-                "strategy": "stable-sha256-provider-pool",
+                "strategy": "stable-sha256-selected-provider-pool",
             }
 
     if persist:
@@ -352,7 +567,40 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--commit", action="store_true")
-    parser.add_argument("--facility-id", type=int, default=DEFAULT_FACILITY_ID)
+    facility_group = parser.add_mutually_exclusive_group()
+    facility_group.add_argument(
+        "--facility-id",
+        type=int,
+        help=(
+            "Use this OpenEMR facility ID. When omitted, prefer "
+            f"{PREFERRED_FACILITY_NAME!r}, otherwise require one unambiguous "
+            "facility with eligible providers."
+        ),
+    )
+    facility_group.add_argument(
+        "--facility-name",
+        help="Use the OpenEMR facility with this exact name.",
+    )
+
+    provider_group = parser.add_mutually_exclusive_group()
+    provider_group.add_argument(
+        "--provider-username",
+        action="append",
+        default=[],
+        help=(
+            "Use only this OpenEMR provider username. Repeat to select "
+            "multiple providers."
+        ),
+    )
+    provider_group.add_argument(
+        "--provider-username-prefix",
+        help=(
+            "Use only provider usernames beginning with this prefix. "
+            "By default, all active authorized non-admin providers at the "
+            "selected facility are eligible."
+        ),
+    )
+
     parser.add_argument("--pc-catid", type=int, default=DEFAULT_PC_CATID)
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     parser.add_argument(
@@ -432,8 +680,13 @@ def main() -> int:
             )
 
         token = get_access_token(client)
-        facility, provider_pool = get_target_resources(
-            openemr["api_base_url"], token, args.facility_id
+        facility, provider_pool, facility_selection = get_target_resources(
+            openemr["api_base_url"],
+            token,
+            args.facility_id,
+            args.facility_name,
+            set(args.provider_username),
+            args.provider_username_prefix,
         )
         organization_map, provider_map = ensure_source_mappings(
             selected_rows,
@@ -469,6 +722,7 @@ def main() -> int:
             "Target facility: "
             f"{facility.get('name')} (ID {facility.get('id')})"
         )
+        print(f"Facility selection: {facility_selection}")
         print(
             "Provider pool: "
             + ", ".join(
