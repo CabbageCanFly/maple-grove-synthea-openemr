@@ -436,7 +436,8 @@ def main() -> int:
             ):
                 print(
                     f"PROGRESS {processed}/{len(selected_rows)} "
-                    f"(created={created}, skipped={skipped}, failed={failed})"
+                    f"(created={created}, skipped={skipped}, failed={failed})",
+                    flush=True,
                 )
 
         for row in selected_rows:
