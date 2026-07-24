@@ -8,7 +8,22 @@ supported clinical records into OpenEMR 8.
 
 ## Student quick start
 
-Run every command below from the repository root.
+Run every command below from the repository root in the macOS Terminal or [WSL on Windows](https://learn.microsoft.com/en-us/windows/wsl/install).
+
+
+### 0.1 Windows (WSL)
+
+Open the desired folder you want to store the project in File Explorer, click the address bar, type:
+
+```text
+wsl
+```
+
+and press **Enter**. WSL will open directly in that folder.
+
+### 0.2 macOS
+
+Open Terminal, type `cd ` (including the trailing space), then drag the desired folder into the Terminal window and press **Enter**.
 
 ### 1. Get the project and check prerequisites
 
