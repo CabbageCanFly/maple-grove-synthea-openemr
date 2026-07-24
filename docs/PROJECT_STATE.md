@@ -136,8 +136,9 @@ Completed functionality:
 - Dry runs and limits are supported
 - Local import tracking and duplicate protection exist
 
-Patient, encounter, condition, allergy, and medication import stages are now
-implemented as separate resumable scripts.
+Patient, encounter, condition, allergy, medication, and selected vital-sign import
+stages are implemented as separate resumable scripts. The final local vital-sign
+bulk acceptance run and all-skipped rerun are still in progress.
 
 The current local validation dataset contains 105 Synthea patients mapped to OpenEMR
 patient identifiers. This is test evidence only; the patient importer must support the
@@ -190,6 +191,18 @@ patient count present in any selected generated dataset.
     of medication titles that exceed OpenEMR's 255-character limit.
 27. Completed the current 2,907-row medication validation run with 2,807 created,
     100 skipped from pilots or prior batches, and 0 failed.
+28. Added a reusable observations audit and classified the current 56,065-row source,
+    including 11,430 strict `vital-signs` rows and 1,503 supported grouped vital forms.
+29. Implemented resumable historical vital-form import with unit conversion, exact-source
+    duplicate collapse, conflict-field omission, immediate checkpointing, field filters,
+    and exact selection manifests for repeatable validation batches.
+30. Diagnosed an OpenEMR 8.0.0.3 encounter-vitals REST session defect that could save the
+    clinical form and then return HTTP 500, and added an exact-version, source-checked,
+    reversible local compatibility script.
+31. Validated the Neville Schuster historical pilot, repeat-run duplicate protection,
+    temperature, oxygen saturation, pediatric head circumference, and an exact mixed
+    25-form batch with an all-skipped repeat. The final 1,503-form acceptance run remains
+    in progress and must not be recorded as complete until its final rerun is all-skipped.
 
 The numeric results above describe the current development dataset. They are not
 fixed targets for future student-generated datasets.
@@ -260,33 +273,75 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: observations and vital signs
+## Current development phase: vital-sign completion and procedures audit
 
-Medication importing is implemented and the current local validation run completed
-successfully.
+Medication importing is complete for the current validation dataset. The observations
+source has been audited and its first supported subset, historical vital signs, is in the
+final local acceptance stage.
 
-Current medication validation dataset:
+Current observations evidence:
 
-- source rows: 2,907
-- created during the final full run: 2,807
-- skipped because they were already seeded or imported during pilots/batches: 100
-- failed: 0
+- source rows: 56,065
+- strict `vital-signs` rows: 11,430
+- initially supported source rows: 7,632
+- supported grouped vital forms: 1,503
+- exact duplicate extra rows collapsed: 2
+- grouped forms with one or more conflicting fields omitted: 12
+- conflict-only or conversion-error groups: 0
 
-These counts are evidence from this generated dataset only. A different Synthea run may
-contain any supported number of patients and medication rows.
+These counts are evidence from the current generated dataset only. The audit and importer
+discover the selected file's contents at runtime.
 
-The next source is `observations.csv`. The current development dataset contains 56,065
-rows, but the audit and future importer must discover the actual row count at runtime.
+Implemented vital-sign behavior:
 
-The observations phase begins with classification rather than immediate bulk import:
+- groups strict `vital-signs` observations by patient, encounter, and exact source time;
+- converts kilograms to pounds, centimetres to inches, and Celsius to Fahrenheit;
+- imports blood pressure, height, weight, temperature, pulse, respiration, oxygen
+  saturation, and head circumference when present and valid;
+- preserves the historical form date in the target OpenEMR timezone;
+- collapses exact duplicate source rows;
+- preserves conflicting source rows locally and omits only the conflicting field;
+- checkpoints returned vital/form identifiers immediately after successful creation;
+- stops on ambiguous failures instead of blindly retrying a possible partial write;
+- treats HTTP 404 from the encounter-vitals collection lookup as an empty collection only
+  for that exact endpoint;
+- supports dry runs, limits, offsets, filters, field-required coverage pilots, quiet mode,
+  progress reporting, resumability, and exact selection manifests.
 
-1. audit columns, categories, value types, units, codes, dates, and dependencies;
-2. separate vital signs, laboratory observations, surveys, social history, and other
-   observation classes;
-3. identify the safest OpenEMR representation for each supported class;
-4. pilot a small clinically useful vital-sign subset;
-5. verify where those records appear in the OpenEMR user interface;
-6. only then choose broader import scope.
+Validated locally so far:
+
+- Neville Schuster historical form and all mapped values;
+- populated OpenEMR user attribution after the compatibility fix;
+- an immediate Neville rerun skipped safely;
+- temperature, oxygen saturation, and pediatric head-circumference pilots;
+- an exact mixed 25-form batch and all-skipped repeat.
+
+Final local vital-sign acceptance criteria:
+
+1. process all 1,503 currently discovered grouped forms with zero failures;
+2. rerun the complete selection and create zero, skip 1,503, fail zero;
+3. update the compatibility notes and this file with the observed final split;
+4. commit the importer, observations audit, compatibility script, and documentation.
+
+The current importer is slower than earlier list-style imports because each vital form is
+an encounter-linked clinical form and the safety path may require both a collection lookup
+and an individual POST. Local Docker throughput of roughly tens of seconds per 100 forms
+is not currently treated as a correctness failure. Do not add concurrency until duplicate
+reconciliation and ambiguous-write handling remain safe under parallel requests. A future
+optimization may reduce collection lookups when target identity, dataset fingerprint, and
+local map state are all verified.
+
+After the acceptance rerun, local OpenEMR 8 vital functionality is complete for the chosen
+scope. Remaining vital work is integration work rather than new local mapping logic:
+
+- wire the compatibility check into setup/orchestration;
+- namespace mapping state by dataset fingerprint and target identity;
+- independently validate the shared AWS OpenEMR 7 target;
+- optimize performance only after correctness and resumability are preserved.
+
+The next source is `procedures.csv`. Its audit may run while the vital import is active
+because it reads local CSV and mapping files only. Do not run another OpenEMR-mutating
+import concurrently with the vital bulk run.
 
 The final student workflow must allow a requested generation size and import whatever
 that generation produced. A fast demo profile may intentionally select a representative
@@ -551,6 +606,77 @@ Next planned resource: `observations.csv`.
 
 <!-- END MEDICATION-IMPORT-MILESTONE -->
 
+<!-- BEGIN VITAL-IMPORT-MILESTONE -->
+
+## Vital-sign importer status
+
+Implemented on 2026-07-24 for the current validation dataset; final complete-run
+acceptance is in progress.
+
+Source coverage:
+
+- observations rows: 56,065
+- strict `vital-signs` rows: 11,430
+- supported source rows: 7,632
+- grouped importable vital forms: 1,503
+- exact duplicate extra rows collapsed: 2
+- conflicting field groups omitted: 12
+
+Supported OpenEMR vital fields:
+
+- systolic and diastolic blood pressure;
+- weight, converted from kilograms to pounds;
+- height and head circumference, converted from centimetres to inches;
+- temperature, converted from Celsius to Fahrenheit;
+- pulse and respiration;
+- oxygen saturation.
+
+Conflict and duplicate policy:
+
+- collapse rows only when all source values are identical;
+- never choose arbitrarily between differing values for the same field and timestamp;
+- preserve every conflicting row in `.local/vital-import-map.json`;
+- omit only the conflicting field while importing the other fields in that grouped form.
+
+OpenEMR 8.0.0.3 compatibility findings:
+
+- the encounter-vitals POST could save `form_vitals` and `forms` rows and then return
+  HTTP 500 because `VitalsCalculatedService` read `$_SESSION['authUserID']` while the
+  authenticated REST identity existed in the Symfony request session;
+- the first failed Neville pilot was therefore a real partial write, not a clean failure;
+- `scripts/ensure_local_vitals_api_compat.py` applies a source-checked and reversible
+  local compatibility fix only to the exact affected version and code shape;
+- container/image recreation may remove the patched application source, so setup must
+  verify and idempotently reapply the compatibility fix when required;
+- the compatibility script backup under `.local/` must not be committed;
+- an encounter with no vitals returns HTTP 404 from the collection endpoint in this
+  installation, which the importer treats as an empty collection only for that lookup.
+
+Completed validation:
+
+- Neville Schuster historical pilot and all-skipped rerun;
+- temperature pilot;
+- oxygen-saturation pilot;
+- pediatric head-circumference pilot;
+- exact mixed 25-form batch and exact all-skipped repeat.
+
+Pending acceptance:
+
+- complete all-discovered-form run with zero failures;
+- complete rerun with zero created and every discovered form skipped;
+- record the observed created/skipped split without turning it into a hard-coded target.
+
+AWS OpenEMR 7 remains a separate compatibility target. Do not apply the 8.0.0.3 patch
+remotely. Record the exact AWS release, scopes, endpoint behavior, user attribution,
+historical date persistence, empty-collection behavior, and partial-write behavior using
+one dry pilot, one live pilot, UI inspection, and one repeat run. If the remote server has
+a different defect and students lack server-file access, require administrator action or
+mark vitals unsupported for that target; do not use direct SQL as the normal fallback.
+
+Next planned resource: `procedures.csv`.
+
+<!-- END VITAL-IMPORT-MILESTONE -->
+
 ## Wider Synthea CSV import order
 
 Dependency-oriented target order:
@@ -599,7 +725,14 @@ The importer will:
 7. keep resource transformations independent from HTTP/API transport;
 8. store mapping files in a generated, ignored state directory;
 9. continue safely after interruption;
-10. record unsupported fields instead of silently pretending they were imported.
+10. record unsupported fields instead of silently pretending they were imported;
+11. namespace mapping state by target profile, target identity, and dataset fingerprint;
+12. never apply a local exact-version compatibility patch to a remote or different-version
+    target without first verifying its version and source shape;
+13. probe each clinical resource with a dry pilot, one live record, UI verification, and
+    a safe repeat before bulk import;
+14. treat ambiguous timeouts and server errors as possible partial writes and reconcile
+    before retrying.
 
 <!-- BEGIN STUDENT-USABILITY-AND-PATH-RULES -->
 
@@ -744,32 +877,37 @@ The exact final command interface may change as the importer is refactored.
 
 ## Files required for the next exact coding step
 
-To continue the observations phase without guessing, preserve or provide:
+To continue the procedures phase without guessing, preserve or provide:
 
-- `output/.../csv/observations.csv` from the selected generated dataset;
+- `output/.../csv/procedures.csv` from the selected generated dataset;
 - `.local/patient-import-map.json`;
 - `.local/encounter-import-map.json`;
-- the completed observation audit output;
-- current OpenEMR 8 Standard API/FHIR capability evidence for observations,
-  vitals, and laboratory results;
-- one chosen patient and encounter for a pilot UI verification.
+- the generated procedures audit report;
+- the exact local and AWS OpenEMR versions and capability evidence for procedure routes;
+- one representative procedure row and mapped encounter for a pilot UI verification.
 
 ## Immediate next development step
 
-Audit `observations.csv` before writing an importer.
+Finish the current vital bulk run and complete the exact all-skipped rerun. In parallel,
+run the read-only `procedures.csv` audit.
 
-The audit must report:
+The procedure audit must report:
 
 - discovered row count, not an expected fixed count;
 - unique patient and encounter references;
 - date range;
-- category and value-type counts;
-- code, description, and unit frequencies;
-- numeric versus text values;
+- code and description frequencies;
+- reason-code and reason-description frequencies;
+- base-cost completeness and distribution;
 - missing patient or encounter mappings;
 - exact duplicate rows;
-- a focused summary of candidate vital-sign rows.
+- repeated same patient/encounter/date/code groups, separated into identical and
+  conflicting variants;
+- exploratory description buckets that help distinguish imaging, surgery, therapy,
+  screening/diagnostic, and other procedure concepts.
 
-After the audit, select one small vital-sign mapping, identify its OpenEMR destination,
-run a dry pilot, create one record, verify it in the UI, and confirm safe rerun behavior.
+After the audit, inspect the available OpenEMR 8 Standard and FHIR procedure routes before
+choosing a destination. Do not assume every Synthea procedure should become an OpenEMR
+billing procedure, encounter issue, order, or FHIR Procedure resource. Select a reduced,
+clinically meaningful scope only after route capability and UI placement are verified.
 
