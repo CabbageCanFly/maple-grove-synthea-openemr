@@ -32,6 +32,7 @@ Thumbs.db
 
 # Local Synthea build and reproducibility working files
 /dist/
+/tools/
 /synthea-customizations/
 /tools/synthea-canada-source/
 

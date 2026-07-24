@@ -99,30 +99,29 @@ python3 --version
 
 Most students should not rebuild Synthea from source.
 
-1. Open the repository in a browser.
-2. Open the **Releases** section.
-3. Open the latest GTA Synthea Generator release.
-4. Download:
+After opening the repository root in Terminal or WSL, run:
 
-```text
-synthea-gta-maple-grove-v0.1.1.jar
+```bash
+mkdir -p dist
+
+curl -L \
+  https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases/download/v0.1.1/synthea-gta-maple-grove-v0.1.1.jar \
+  -o dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-5. Move the downloaded JAR directly into the project folder:
+Verify:
 
-```text
-tools/
+```bash
+ls -lh dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-The final location should look like:
+The final location is:
 
 ```text
-maple-grove-synthea-openemr/
-└── tools/
-    └── synthea-gta-maple-grove-v0.1.1.jar
+dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-Do not commit the JAR through GitHub Desktop.
+Do not commit the JAR.
 
 ---
 
@@ -266,5 +265,5 @@ Before pulling, save or commit any local changes you want to keep.
 - `README.md` — short project overview
 - `docs/PROJECT_HISTORY.md` — why the custom GTA build was created
 - `docs/SYNTHEA_GTA_BUILD.md` — technical record of the working build
-- `tools/README.md` — where the prebuilt JAR belongs
+- `docs/STUDENT_QUICK_START.md` — concise start-to-finish instructions
 - `output/README.md` — where generated CSV files are stored

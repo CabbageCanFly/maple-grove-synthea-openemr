@@ -9,18 +9,22 @@ git clone <repository-url>
 cd maple-grove-synthea
 ```
 
-## 2. Add the Synthea JAR
+## 2. Download the Synthea JAR
 
-Download the newest Maple Grove Synthea release JAR and place it in:
+Run this from the repository root:
 
-```text
-dist/
+```bash
+mkdir -p dist
+
+curl -L \
+  https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases/download/v0.1.1/synthea-gta-maple-grove-v0.1.1.jar \
+  -o dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-Example:
+Verify:
 
-```text
-dist/synthea-gta-maple-grove-v0.1.1.jar
+```bash
+ls -lh dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
 ## 3. Create the Python environment
