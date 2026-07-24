@@ -79,7 +79,9 @@ python3 -m pip install -r requirements_openemr_import.txt
 ## 5. Generate a small test dataset
 
 ```bash
-python3 scripts/generate_gta_patients.py --population 5
+python3 scripts/generate_gta_patients.py \
+  --population 30 \
+  --min-allergies 10
 ```
 
 ## 6. Start OpenEMR 8

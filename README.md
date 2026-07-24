@@ -1,6 +1,6 @@
 # Maple Grove Synthea and OpenEMR
 
-Generate synthetic Greater Toronto Area patient data with Synthea, then import
+Generate synthetic Greater Toronto Area (GTA) patient data with Synthea, then import
 supported clinical records into OpenEMR 8.
 
 > **Synthetic data only:** Never represent generated or imported records as real
@@ -65,6 +65,10 @@ Java should report version 17.
 
 ### 2. Download the GTA Synthea JAR
 
+The latest JAR for this Synthea revision can be found in the same GitHub repository:
+
+[https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases](https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases)
+
 ```bash
 mkdir -p dist
 
@@ -96,7 +100,9 @@ source .venv/bin/activate
 ### 4. Generate a small test dataset
 
 ```bash
-python3 scripts/generate_gta_patients.py --population 5
+python3 scripts/generate_gta_patients.py \
+  --population 30 \
+  --min-allergies 10
 ```
 
 Each generation is stored in a unique directory under `output/runs/`. The
@@ -109,7 +115,7 @@ Start Docker Desktop and the local OpenEMR 8 containers.
 In OpenEMR, open:
 
 ```text
-Administration -> Config -> Connectors
+Admin -> Config -> Connectors
 ```
 
 Enable:
@@ -126,7 +132,7 @@ https://localhost:9300
 ```
 
 Create or reuse one facility. Also create at least one active, authorized
-provider assigned to that facility. Use a clearly synthetic unique NPI, such as:
+provider in `Admin -> Users` assigned to that facility. You MUST add a unique NPI; as a placeholder, use a clearly synthetic unique NPI, such as:
 
 ```text
 0000000001
@@ -143,7 +149,7 @@ python3 scripts/register_openemr_client.py
 In OpenEMR, open:
 
 ```text
-Administration -> System -> API Clients
+Admin -> System -> API Clients
 ```
 
 Enable the newest **Maple Grove Synthea Importer** client.
