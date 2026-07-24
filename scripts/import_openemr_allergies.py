@@ -102,8 +102,17 @@ REACTION_OPTION_BY_CODE = {
 }
 
 
-def primary_reaction(row: dict[str, str]) -> tuple[str, str]:
-    candidates: list[tuple[int, int, str, str]] = []
+def primary_reaction(
+    row: dict[str, str],
+) -> tuple[str, str, str]:
+    """Choose one OpenEMR reaction without failing on new source concepts.
+
+    The exact Synthea reaction codes and descriptions are still preserved in the
+    local allergy map. When the selected source reaction has no known OpenEMR
+    list-option mapping, use OpenEMR's portable ``unassigned`` option.
+    """
+
+    candidates: list[tuple[int, int, str, str, str]] = []
 
     for index in (1, 2):
         code = clean(row.get(f"REACTION{index}"))
@@ -113,22 +122,23 @@ def primary_reaction(row: dict[str, str]) -> tuple[str, str]:
         if not code and not description:
             continue
 
-        if not code:
-            raise ValueError(
-                f"Reaction {index} has a description but no SNOMED code: "
-                f"{description}"
-            )
-
-        option_id = REACTION_OPTION_BY_CODE.get(code)
-        if option_id is None:
-            raise ValueError(
-                f"Unsupported Synthea reaction code {code}: {description}"
-            )
-
         if severity and severity not in SEVERITY_RANK:
             raise ValueError(
                 f"Unsupported reaction severity: {severity}"
             )
+
+        fallback_reason = ""
+        if not code:
+            option_id = "unassigned"
+            fallback_reason = (
+                f"reaction {index} has a description but no SNOMED code"
+            )
+        else:
+            option_id = REACTION_OPTION_BY_CODE.get(code, "unassigned")
+            if option_id == "unassigned":
+                fallback_reason = (
+                    f"no OpenEMR mapping for source reaction code {code}"
+                )
 
         # Higher severity wins. Negating the index makes reaction 1 win ties.
         candidates.append(
@@ -137,14 +147,15 @@ def primary_reaction(row: dict[str, str]) -> tuple[str, str]:
                 -index,
                 option_id,
                 severity or "unassigned",
+                fallback_reason,
             )
         )
 
     if not candidates:
-        return "unassigned", "unassigned"
+        return "unassigned", "unassigned", "no source reaction supplied"
 
-    _, _, option_id, severity = max(candidates)
-    return option_id, severity
+    _, _, option_id, severity, fallback_reason = max(candidates)
+    return option_id, severity, fallback_reason
 
 
 def build_payload(row: dict[str, str]) -> dict[str, Any]:
@@ -161,7 +172,7 @@ def build_payload(row: dict[str, str]) -> dict[str, Any]:
     if not code:
         raise ValueError("Allergy CODE is empty.")
 
-    reaction, severity = primary_reaction(row)
+    reaction, severity, _ = primary_reaction(row)
 
     payload: dict[str, Any] = {
         "title": title,
@@ -261,6 +272,20 @@ def api_post_record(
     )
     records = response_records(response, f"POST {path}")
     return records[0] if records else {}
+
+
+def is_reaction_option_error(error: Exception) -> bool:
+    """Return true when OpenEMR appears to reject a reaction list option."""
+
+    message = str(error).casefold()
+    hints = (
+        "reaction",
+        "list option",
+        "list_options",
+        "option_id",
+        "invalid option",
+    )
+    return any(hint in message for hint in hints)
 
 
 def normalize_date(value: Any) -> str:
@@ -481,6 +506,7 @@ def main() -> int:
         created = 0
         skipped = 0
         failed = 0
+        reaction_fallbacks = 0
 
         def print_progress() -> None:
             processed = created + skipped + failed
@@ -559,13 +585,48 @@ def main() -> int:
                     continue
 
                 payload = build_payload(row)
-                created_allergy = api_post_record(
-                    session,
-                    openemr["api_base_url"],
-                    token,
-                    f"patient/{patient_uuid}/allergy",
-                    payload,
-                )
+                _, _, source_reaction_fallback = primary_reaction(row)
+                target_reaction_fallback = ""
+
+                try:
+                    created_allergy = api_post_record(
+                        session,
+                        openemr["api_base_url"],
+                        token,
+                        f"patient/{patient_uuid}/allergy",
+                        payload,
+                    )
+                except RuntimeError as first_error:
+                    original_reaction = clean(payload.get("reaction"))
+                    if (
+                        original_reaction
+                        and original_reaction != "unassigned"
+                        and is_reaction_option_error(first_error)
+                    ):
+                        fallback_payload = {
+                            **payload,
+                            "reaction": "unassigned",
+                        }
+                        created_allergy = api_post_record(
+                            session,
+                            openemr["api_base_url"],
+                            token,
+                            f"patient/{patient_uuid}/allergy",
+                            fallback_payload,
+                        )
+                        payload = fallback_payload
+                        target_reaction_fallback = (
+                            "OpenEMR rejected reaction option "
+                            f"{original_reaction!r}; used 'unassigned'"
+                        )
+                        if not args.quiet:
+                            print(
+                                f"WARN {label}: {target_reaction_fallback}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                    else:
+                        raise
             except (
                 RuntimeError,
                 ValueError,
@@ -607,13 +668,20 @@ def main() -> int:
                 "reaction2_code": clean(row.get("REACTION2")),
                 "reaction2_description": clean(row.get("DESCRIPTION2")),
                 "reaction2_severity": clean(row.get("SEVERITY2")),
+                "openemr_reaction": clean(payload.get("reaction")),
+                "openemr_severity": clean(payload.get("severity_al")),
+                "source_reaction_fallback": source_reaction_fallback,
+                "target_reaction_fallback": target_reaction_fallback,
                 "status": "created",
             }
             save_json(ALLERGY_MAP_FILE, allergy_map)
 
+            if source_reaction_fallback or target_reaction_fallback:
+                reaction_fallbacks += 1
+
             existing_by_patient[patient_uuid].append(
                 {
-                    **build_payload(row),
+                    **payload,
                     "id": allergy_id,
                     "uuid": allergy_uuid,
                 }
@@ -632,6 +700,7 @@ def main() -> int:
         print(f"  Created: {created}")
         print(f"  Skipped: {skipped}")
         print(f"  Failed: {failed}")
+        print(f"  Reaction fallbacks to unassigned: {reaction_fallbacks}")
         print("  Access token was not printed or saved.")
         return 1 if failed else 0
 
