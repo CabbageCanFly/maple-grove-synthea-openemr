@@ -173,6 +173,24 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--min-allergies",
+        type=int,
+        default=0,
+        help=(
+            "Require at least this many allergy rows. If the generated dataset "
+            "contains fewer rows, retry with a different patient seed. Default: 0."
+        ),
+    )
+    parser.add_argument(
+        "--max-generation-attempts",
+        type=int,
+        default=10,
+        help=(
+            "Maximum attempts when --min-allergies is greater than zero. "
+            "Default: 10."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate inputs and print the Java command without generating data.",
@@ -365,11 +383,22 @@ def write_json_atomic(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def first_retry_seed(base_seed: int | None) -> int:
+    """Return the first deterministic seed used for bounded retries."""
+
+    if base_seed is not None:
+        return base_seed
+
+    return int(datetime.now().astimezone().timestamp() * 1_000_000)
+
+
 def build_command(
     args: argparse.Namespace,
     jar: Path,
     config: Path,
     run_dir: Path,
+    *,
+    patient_seed: int | None = None,
 ) -> list[str]:
     command = [
         args.java,
@@ -381,8 +410,11 @@ def build_command(
         str(args.population),
         f"--exporter.baseDirectory={run_dir}",
     ]
-    if args.seed is not None:
-        command.extend(["-s", str(args.seed)])
+    effective_patient_seed = (
+        args.seed if patient_seed is None else patient_seed
+    )
+    if effective_patient_seed is not None:
+        command.extend(["-s", str(effective_patient_seed)])
     if args.clinician_seed is not None:
         command.extend(["-cs", str(args.clinician_seed)])
     if args.reference_date:
@@ -397,92 +429,242 @@ def build_command(
 def main() -> int:
     try:
         args = parse_args()
+
         if args.population < 1:
             raise RuntimeError("--population must be at least 1.")
+        if args.min_allergies < 0:
+            raise RuntimeError("--min-allergies cannot be negative.")
+        if args.max_generation_attempts < 1:
+            raise RuntimeError("--max-generation-attempts must be at least 1.")
         if args.reference_date and not re.fullmatch(r"\d{8}", args.reference_date):
             raise RuntimeError("--reference-date must use YYYYMMDD format.")
 
         config = root_path(args.config)
         output_root = root_path(args.output_root)
+
         if not config.is_file():
-            raise RuntimeError(f"GTA Synthea configuration was not found: {config}")
+            raise RuntimeError(
+                f"GTA Synthea configuration was not found: {config}"
+            )
 
         jar = locate_jar(args.jar)
         check_java(args.java)
-        run_name = safe_run_name(args.run_name, args.population)
-        run_dir = unique_run_dir(output_root, run_name, args.run_name is not None)
-        command = build_command(args, jar, config, run_dir)
+        output_root.mkdir(parents=True, exist_ok=True)
 
-        print("Maple Grove GTA Synthea generation")
-        print(f"  JAR: {jar}")
-        print(f"  Configuration: {config}")
-        print(f"  Population requested: {args.population}")
-        print(f"  Output run: {run_dir}")
-        print("  Command:")
-        print("   ", shlex.join(command))
+        attempts_allowed = (
+            args.max_generation_attempts
+            if args.min_allergies > 0
+            else 1
+        )
 
-        if args.dry_run:
-            print("\nDry run complete. Synthea was not started.")
+        base_run_name = safe_run_name(args.run_name, args.population)
+        seed_base = (
+            first_retry_seed(args.seed)
+            if args.min_allergies > 0
+            else args.seed
+        )
+
+        for attempt in range(1, attempts_allowed + 1):
+            if attempts_allowed == 1:
+                requested_run_name = base_run_name
+                explicit_run_name = args.run_name is not None
+            else:
+                requested_run_name = (
+                    f"{base_run_name}-attempt{attempt}"
+                )
+                explicit_run_name = False
+
+            run_dir = unique_run_dir(
+                output_root,
+                requested_run_name,
+                explicit_run_name,
+            )
+
+            patient_seed = (
+                seed_base + attempt - 1
+                if seed_base is not None
+                else None
+            )
+
+            command = build_command(
+                args,
+                jar,
+                config,
+                run_dir,
+                patient_seed=patient_seed,
+            )
+
+            print("Maple Grove GTA Synthea generation")
+            print(f"  JAR: {jar}")
+            print(f"  Configuration: {config}")
+            print(f"  Population requested: {args.population}")
+
+            if args.min_allergies > 0:
+                print(
+                    f"  Required allergy rows: {args.min_allergies}"
+                )
+                print(
+                    f"  Generation attempt: "
+                    f"{attempt}/{attempts_allowed}"
+                )
+                print(f"  Patient seed: {patient_seed}")
+
+            print(f"  Output run: {run_dir}")
+            print("  Command:")
+            print("   ", shlex.join(command))
+
+            if args.dry_run:
+                print("\nDry run complete. Synthea was not started.")
+                return 0
+
+            result = subprocess.run(
+                command,
+                cwd=ROOT,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Synthea exited with status "
+                    f"{result.returncode}. "
+                    "No current-dataset manifest was changed. "
+                    f"Partial output may remain at {run_dir}."
+                )
+
+            csv_dir = run_dir / "csv"
+            entries = build_csv_inventory(csv_dir)
+
+            patients_entry = next(
+                item
+                for item in entries
+                if item["name"] == "patients.csv"
+            )
+
+            allergies_entry = next(
+                item
+                for item in entries
+                if item["name"] == "allergies.csv"
+            )
+
+            allergy_rows = int(allergies_entry["rows"])
+
+            if allergy_rows < args.min_allergies:
+                print()
+                print(
+                    "Generation did not meet the requested "
+                    "allergy minimum:"
+                )
+                print(
+                    f"  Allergies generated: "
+                    f"{allergy_rows}/{args.min_allergies}"
+                )
+
+                if attempt < attempts_allowed:
+                    print(
+                        "  Removing unsuccessful run and retrying "
+                        "with a different patient seed."
+                    )
+                    shutil.rmtree(run_dir)
+                    print()
+                    continue
+
+                raise RuntimeError(
+                    f"Could not generate at least "
+                    f"{args.min_allergies} allergy row(s) "
+                    f"after {attempts_allowed} attempt(s). "
+                    f"The final run remains at {run_dir} "
+                    "for inspection."
+                )
+
+            fingerprint = dataset_fingerprint(entries)
+            created_at = (
+                datetime.now()
+                .astimezone()
+                .isoformat(timespec="seconds")
+            )
+
+            manifest = {
+                "schema_version": 1,
+                "created_at": created_at,
+                "generator": "scripts/generate_gta_patients.py",
+                "jar": relative_to_root(jar),
+                "jar_sha256": sha256_file(jar),
+                "config": relative_to_root(config),
+                "config_sha256": sha256_file(config),
+                "population_requested": args.population,
+                "population_generated": patients_entry["rows"],
+                "seed": patient_seed,
+                "clinician_seed": args.clinician_seed,
+                "reference_date": args.reference_date,
+                "minimum_allergies_requested": args.min_allergies,
+                "allergies_generated": allergy_rows,
+                "generation_attempt": attempt,
+                "output_directory": relative_to_root(run_dir),
+                "csv_directory": relative_to_root(csv_dir),
+                "dataset_fingerprint": fingerprint,
+                "csv_files": entries,
+            }
+
+            write_json_atomic(
+                run_dir / RUN_MANIFEST_NAME,
+                manifest,
+            )
+
+            if not args.no_select:
+                write_json_atomic(
+                    CURRENT_DATASET_FILE,
+                    manifest,
+                )
+
+            print("\nGeneration complete")
+            print(
+                f"  Patients generated: "
+                f"{patients_entry['rows']}"
+            )
+            print(f"  Allergies generated: {allergy_rows}")
+            print(f"  Generation attempts: {attempt}")
+            print(f"  CSV files: {len(entries)}")
+            print(f"  CSV directory: {csv_dir}")
+            print(f"  Dataset fingerprint: {fingerprint}")
+
+            if args.no_select:
+                print(
+                    "  Current dataset selection: "
+                    "unchanged (--no-select)"
+                )
+            else:
+                print(
+                    f"  Current dataset manifest: "
+                    f"{CURRENT_DATASET_FILE}"
+                )
+
+            if patients_entry["rows"] != args.population:
+                print(
+                    "  Note: generated patient rows differ "
+                    "from the requested population; the "
+                    "manifest records both values."
+                )
+
+            if not args.no_select:
+                print("\nNext command:")
+                print("  python3 scripts/import_openemr.py")
+
             return 0
 
-        output_root.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(command, cwd=ROOT, check=False)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Synthea exited with status {result.returncode}. "
-                f"No current-dataset manifest was changed. Partial output may remain at {run_dir}."
-            )
+        raise RuntimeError(
+            "Generation attempts were exhausted unexpectedly."
+        )
 
-        csv_dir = run_dir / "csv"
-        entries = build_csv_inventory(csv_dir)
-        patients_entry = next(item for item in entries if item["name"] == "patients.csv")
-        fingerprint = dataset_fingerprint(entries)
-        created_at = datetime.now().astimezone().isoformat(timespec="seconds")
-
-        manifest = {
-            "schema_version": 1,
-            "created_at": created_at,
-            "generator": "scripts/generate_gta_patients.py",
-            "jar": relative_to_root(jar),
-            "jar_sha256": sha256_file(jar),
-            "config": relative_to_root(config),
-            "config_sha256": sha256_file(config),
-            "population_requested": args.population,
-            "population_generated": patients_entry["rows"],
-            "seed": args.seed,
-            "clinician_seed": args.clinician_seed,
-            "reference_date": args.reference_date,
-            "output_directory": relative_to_root(run_dir),
-            "csv_directory": relative_to_root(csv_dir),
-            "dataset_fingerprint": fingerprint,
-            "csv_files": entries,
-        }
-
-        write_json_atomic(run_dir / RUN_MANIFEST_NAME, manifest)
-        if not args.no_select:
-            write_json_atomic(CURRENT_DATASET_FILE, manifest)
-
-        print("\nGeneration complete")
-        print(f"  Patients generated: {patients_entry['rows']}")
-        print(f"  CSV files: {len(entries)}")
-        print(f"  CSV directory: {csv_dir}")
-        print(f"  Dataset fingerprint: {fingerprint}")
-        if args.no_select:
-            print("  Current dataset selection: unchanged (--no-select)")
-        else:
-            print(f"  Current dataset manifest: {CURRENT_DATASET_FILE}")
-        if patients_entry["rows"] != args.population:
-            print(
-                "  Note: generated patient rows differ from the requested population; "
-                "the manifest records both values."
-            )
-        if not args.no_select:
-            print("\nNext command:")
-            print("  python3 scripts/import_openemr.py")
-        return 0
-
-    except (RuntimeError, OSError, csv.Error, json.JSONDecodeError) as error:
-        print(f"GTA Synthea generation failed: {error}", file=sys.stderr)
+    except (
+        RuntimeError,
+        OSError,
+        csv.Error,
+        json.JSONDecodeError,
+    ) as error:
+        print(
+            f"GTA Synthea generation failed: {error}",
+            file=sys.stderr,
+        )
         return 1
 
 

@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -245,6 +246,15 @@ def parse_args() -> argparse.Namespace:
             "OpenEMR target. Use only after verifying those maps belong together."
         ),
     )
+    parser.add_argument(
+        "--start-new-dataset",
+        action="store_true",
+        help=(
+            "Archive local import maps belonging to a previous dataset and start "
+            "fresh mapping state for the currently selected dataset. Existing "
+            "OpenEMR records are not deleted."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -470,6 +480,130 @@ def write_import_context(csv_dir: Path, fingerprint: str, target: str) -> None:
         encoding="utf-8",
     )
     temporary.replace(IMPORT_CONTEXT_FILE)
+
+
+def read_import_context() -> dict[str, object] | None:
+    """Read the current import-state binding when one exists."""
+
+    if not IMPORT_CONTEXT_FILE.is_file():
+        return None
+
+    try:
+        value = json.loads(
+            IMPORT_CONTEXT_FILE.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Could not read {IMPORT_CONTEXT_FILE}: {error}"
+        ) from error
+
+    if not isinstance(value, dict):
+        raise RuntimeError(
+            f"Expected a JSON object in {IMPORT_CONTEXT_FILE}"
+        )
+
+    return value
+
+
+def archive_import_state() -> Path | None:
+    """Move the current dataset-specific maps into a timestamped archive."""
+
+    files = import_map_files()
+
+    if IMPORT_CONTEXT_FILE.is_file():
+        files.append(IMPORT_CONTEXT_FILE)
+
+    files = sorted(set(files))
+
+    if not files:
+        return None
+
+    archive_root = ROOT / ".local/import-state-archive"
+    timestamp = datetime.now().astimezone().strftime(
+        "%Y%m%d-%H%M%S"
+    )
+    archive_dir = archive_root / timestamp
+
+    suffix = 2
+    while archive_dir.exists():
+        archive_dir = archive_root / f"{timestamp}-{suffix}"
+        suffix += 1
+
+    archive_dir.mkdir(parents=True, exist_ok=False)
+
+    for source in files:
+        shutil.move(str(source), str(archive_dir / source.name))
+
+    return archive_dir
+
+
+def prepare_new_dataset_state(
+    csv_dir: Path,
+    *,
+    commit: bool,
+    enabled: bool,
+) -> bool:
+    """Prepare state for another generated dataset.
+
+    Return True when preflight should skip the normal context validator because
+    the existing state would be archived during the corresponding commit run.
+    """
+
+    if not enabled:
+        return False
+
+    selected_fingerprint = dataset_fingerprint(csv_dir)
+    context = read_import_context()
+    maps = import_map_files()
+
+    if context is not None:
+        bound_fingerprint = str(
+            context.get("dataset_fingerprint") or ""
+        )
+        bound_target = str(
+            context.get("openemr_base_url") or ""
+        ).rstrip("/")
+        selected_target = client_target()
+
+        if (
+            selected_target
+            and bound_target
+            and selected_target != bound_target
+        ):
+            raise RuntimeError(
+                "The saved import maps belong to a different OpenEMR "
+                f"target. Bound target: {bound_target}; selected target: "
+                f"{selected_target}. Use separate .local state for each "
+                "OpenEMR installation."
+            )
+
+        if bound_fingerprint == selected_fingerprint:
+            print(
+                "Import state: selected dataset already matches the "
+                "existing import context; no archive is needed."
+            )
+            return False
+
+    elif not maps:
+        print(
+            "Import state: no previous dataset-specific mappings were "
+            "found; no archive is needed."
+        )
+        return False
+
+    if not commit:
+        print(
+            "Import state: previous dataset mappings will be archived "
+            "when this command is rerun with --commit."
+        )
+        return True
+
+    archive_dir = archive_import_state()
+
+    if archive_dir is not None:
+        print(f"Archived previous import state: {archive_dir}")
+
+    return False
 
 
 def validate_import_context(
@@ -751,11 +885,19 @@ def main() -> int:
                 "scripts/register_openemr_client.py first."
             )
 
-        validate_import_context(
+        new_dataset_preflight = prepare_new_dataset_state(
             csv_dir,
             commit=args.commit,
-            adopt_existing_state=args.adopt_existing_state,
+            enabled=args.start_new_dataset,
         )
+
+        if not new_dataset_preflight:
+            validate_import_context(
+                csv_dir,
+                commit=args.commit,
+                adopt_existing_state=args.adopt_existing_state,
+            )
+
         if args.adopt_existing_state and args.csv_dir is not None:
             fingerprint = dataset_fingerprint(csv_dir)
             write_current_dataset_selection(csv_dir, fingerprint)
