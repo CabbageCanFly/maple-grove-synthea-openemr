@@ -52,6 +52,52 @@ For these allergy rows:
 - preserve the original `SYSTEM` and `CODE` in `.local/allergy-import-map.json`;
 - only send a diagnosis code when its coding system is known and maps to a recognized OpenEMR code type.
 
+<!-- BEGIN ALLERGY-REACTION-LIST -->
+
+### Recommended OpenEMR Reaction list
+
+The allergy importer maps supported Synthea reaction SNOMED CT codes to
+OpenEMR Reaction-list option IDs. These options must be configured by an
+OpenEMR administrator for friendly reaction labels to persist consistently.
+
+Keep `Unassigned` first as the special empty or fallback reaction, then
+alphabetize the real reactions.
+
+In OpenEMR, configure the Reaction list with the following values:
+
+| Order | ID | Title | Code(s) | Local setup status |
+|---:|---|---|---|---|
+| 10 | `unassigned` | Unassigned | Leave blank | Existing |
+| 20 | `allergic_angioedema` | Allergic Angioedema | `SNOMED-CT:402387002` | Add |
+| 30 | `anaphylaxis` | Anaphylaxis | `SNOMED-CT:39579001` | Add |
+| 40 | `cough` | Cough | `SNOMED-CT:49727002` | Add |
+| 50 | `cutaneous_hypersensitivity` | Cutaneous Hypersensitivity | `SNOMED-CT:21626009` | Add |
+| 60 | `diarrhea` | Diarrhea | `SNOMED-CT:62315008` | Add |
+| 70 | `hives` | Hives | `SNOMED-CT:247472004` | Existing; change order |
+| 80 | `itching` | Itching | `SNOMED-CT:418290006` | Add |
+| 90 | `nasal_discharge` | Nasal Discharge | `SNOMED-CT:267101005` | Add |
+| 100 | `nausea` | Nausea | `SNOMED-CT:422587007` | Existing; change order |
+| 110 | `rhinoconjunctivitis` | Rhinoconjunctivitis | `SNOMED-CT:878820003` | Add |
+| 120 | `shortness_of_breath` | Shortness of Breath | `SNOMED-CT:267036007` | Existing; change order |
+| 130 | `skin_eruption` | Skin Eruption | `SNOMED-CT:271807003` | Add |
+| 140 | `sneezing` | Sneezing | `SNOMED-CT:76067001` | Add |
+| 150 | `vomiting` | Vomiting | `SNOMED-CT:300359004` | Add |
+| 160 | `wheezing` | Wheezing | `SNOMED-CT:56018004` | Add |
+
+The option IDs must remain exactly as shown because
+`scripts/import_openemr_allergies.py` uses them as API values.
+
+When an option is unavailable or rejected by the target OpenEMR installation,
+the importer falls back to `unassigned` rather than failing the allergy record.
+The source reaction code, description, and severity remain preserved in
+`.local/allergy-import-map.json`.
+
+This list was validated against the current local OpenEMR 8.0.0.3 setup.
+Other OpenEMR versions or shared installations require equivalent
+administrator-side configuration and independent validation.
+
+<!-- END ALLERGY-REACTION-LIST -->
+
 ## Encounter-vitals API
 
 OpenEMR 8.0.0.3 encounter-vitals behavior, the authenticated-session defect,
