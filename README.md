@@ -96,7 +96,9 @@ source .venv/bin/activate
 ### 4. Generate a small test dataset
 
 ```bash
-python3 scripts/generate_gta_patients.py --population 5
+python3 scripts/generate_gta_patients.py \
+  --population 30 \
+  --min-allergies 10
 ```
 
 Each generation is stored in a unique directory under `output/runs/`. The
