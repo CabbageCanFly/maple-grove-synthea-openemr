@@ -59,8 +59,7 @@ All imported records are synthetic. Never use real patient information.
 - CSV export is the source format for the OpenEMR import workflow
 - generation size is configurable; the importer must handle the generated files rather
   than assume the current 105-patient validation dataset
-- future orchestration should associate local mapping state with a dataset fingerprint
-  or generation run so a newly generated dataset cannot silently reuse stale mappings
+- orchestrated imports bind local mapping state to a dataset fingerprint and OpenEMR target
 
 ## Repository decisions
 
@@ -963,6 +962,46 @@ For unusually large replacements or when chat formatting makes a heredoc unrelia
 providing a complete downloadable file is acceptable.
 
 <!-- END STUDENT-USABILITY-AND-PATH-RULES -->
+
+<!-- BEGIN DATASET-GENERATION-AND-SELECTION -->
+
+## Dataset generation and selection status
+
+The fresh local generation/import handoff is implemented.
+
+- `scripts/generate_gta_patients.py` accepts a configurable population size.
+- It uses the pinned GTA Synthea JAR under `dist/` by default.
+- It runs the pinned GTA configuration without requiring students to assemble
+  a Java command.
+- Each generation is written to a unique directory under `output/runs/`.
+- The generator validates required CSV files and records row counts, hashes,
+  source JAR/configuration hashes, and a dataset fingerprint.
+- `output/current-dataset.json` identifies the dataset selected for the normal
+  orchestrated import command.
+- `scripts/import_openemr.py` no longer defaults to the historical
+  `output/gta-100-v2/csv` development folder.
+- `--csv-dir` remains available as an explicit override for legacy or
+  maintainer-selected datasets.
+- When no manifest exists, the orchestrator may select the only complete CSV
+  dataset under `output/`; it refuses to guess when multiple candidates exist.
+- `.local/import-context.json` binds resumable import maps to both a dataset
+  fingerprint and an OpenEMR base URL.
+- Existing maps from before this binding feature require one explicit
+  `--adopt-existing-state` preflight after the maintainer verifies that the
+  selected dataset and target are correct.
+
+Normal fresh flow:
+
+```bash
+python3 scripts/generate_gta_patients.py --population 100
+python3 scripts/import_openemr.py
+python3 scripts/import_openemr.py --commit --quiet --progress-every 100
+```
+
+The historical `gta-100-v2` folder and its recorded counts remain validation
+history only. They are not required names or fixed student targets.
+
+<!-- END DATASET-GENERATION-AND-SELECTION -->
 
 ## Planned student commands
 

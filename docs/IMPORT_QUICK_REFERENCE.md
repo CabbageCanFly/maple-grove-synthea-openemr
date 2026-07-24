@@ -1,101 +1,135 @@
 # OpenEMR Import Quick Reference
 
-This is the current developer/student-at-a-glance workflow for the implemented import scripts.
-
 Run all commands from the repository root.
 
-> The final release should replace most resource-specific commands with one orchestrated import command.
-
-## 1. Enter the project and activate Python
+## 1. Prepare Python
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements_openemr_import.txt
 ```
 
-Confirm you are in the repository root:
+Confirm the repository root:
 
 ```bash
 test -f README.md && test -d scripts && echo "Project folder detected."
 ```
 
-## 2. Prepare the OpenEMR connection
+## 2. Generate or select a dataset
 
-Detect the target:
+Generate a fresh 100-patient GTA dataset:
+
+```bash
+python3 scripts/generate_gta_patients.py --population 100
+```
+
+The generator writes a unique run below `output/runs/` and updates:
+
+```text
+output/current-dataset.json
+```
+
+To use an existing dataset explicitly, add this to an orchestrator command:
+
+```bash
+--csv-dir output/gta-100-v2/csv
+```
+
+## 3. Prepare the OpenEMR connection
 
 ```bash
 python3 scripts/detect_openemr.py
-```
-
-For local Docker OpenEMR, ensure HTTPS is available:
-
-```bash
 python3 scripts/ensure_local_https.py
-```
-
-Register an OAuth client:
-
-```bash
 python3 scripts/register_openemr_client.py
 ```
 
-Then enable the newly registered client in OpenEMR:
+Enable the newest client in:
 
 ```text
 Administration -> System -> API Clients
 ```
 
-Test the connection:
+Then test it:
 
 ```bash
 python3 scripts/test_openemr_connection.py
 ```
 
-## 3. Import patients
+## 4. Run the supported workflow
 
-Dry-run one patient:
-
-```bash
-python3 scripts/import_openemr.py --limit 1
-```
-
-Import all patients:
+Preflight only:
 
 ```bash
-python3 scripts/import_openemr.py --all --commit
+python3 scripts/import_openemr.py
 ```
 
-## 4. Import encounters
-
-Dry-run one encounter:
+Create records:
 
 ```bash
-python3 scripts/import_openemr_encounters.py --limit 1
+python3 scripts/import_openemr.py \
+  --commit \
+  --quiet \
+  --progress-every 100
 ```
 
-Import all encounters with live progress:
+Supported dependency order:
+
+1. patients;
+2. encounters;
+3. curated conditions;
+4. curated allergies;
+5. medications;
+6. supported vital signs.
+
+For legacy development maps created before dataset/target binding, verify the
+selected dataset and OpenEMR target, then adopt them once:
+
+```bash
+python3 scripts/import_openemr.py \
+  --csv-dir output/gta-100-v2/csv \
+  --adopt-existing-state
+```
+
+## 5. Run selected resources
+
+```bash
+python3 scripts/import_openemr.py \
+  --resource patients \
+  --resource encounters \
+  --commit
+```
+
+## 6. Resource-specific developer commands
+
+These are for pilots and focused validation. The orchestrator is preferred for
+a normal complete run.
+
+### Patients
+
+```bash
+python3 scripts/import_openemr_patients.py \
+  --patients-csv output/gta-100-v2/csv/patients.csv \
+  --limit 1
+```
+
+### Encounters
 
 ```bash
 python3 -u scripts/import_openemr_encounters.py \
+  --encounters-csv output/gta-100-v2/csv/encounters.csv \
+  --organizations-csv output/gta-100-v2/csv/organizations.csv \
+  --providers-csv output/gta-100-v2/csv/providers.csv \
   --all \
   --commit \
   --progress-every 250
 ```
 
-## 5. Import curated medical problems
-
-Dry-run one disorder:
-
-```bash
-python3 scripts/import_openemr_conditions.py \
-  --semantic-tag disorder \
-  --limit 1
-```
-
-Import the approved clinical-problem categories:
+### Conditions
 
 ```bash
 python3 -u scripts/import_openemr_conditions.py \
+  --conditions-csv output/gta-100-v2/csv/conditions.csv \
   --semantic-tag disorder \
   --semantic-tag "morphologic abnormality" \
   --semantic-tag untagged \
@@ -105,93 +139,45 @@ python3 -u scripts/import_openemr_conditions.py \
   --progress-every 100
 ```
 
-The importer intentionally excludes findings, situations, and person-context records from Medical Problems.
-
-## 6. Import curated allergies
-
-Dry-run one allergy:
-
-```bash
-python3 scripts/import_openemr_allergies.py --limit 1
-```
-
-Import all approved allergies with live progress:
+### Allergies
 
 ```bash
 python3 -u scripts/import_openemr_allergies.py \
+  --allergies-csv output/gta-100-v2/csv/allergies.csv \
   --all \
   --commit \
   --quiet \
   --progress-every 10
 ```
 
-Generic `Allergic disposition (finding)` rows are excluded automatically.
-
-## 7. Import medications
-
-Dry-run one medication episode:
-
-```bash
-python3 scripts/import_openemr_medications.py --limit 1
-```
-
-Import all medication episodes:
+### Medications
 
 ```bash
 python3 -u scripts/import_openemr_medications.py \
+  --medications-csv output/gta-100-v2/csv/medications.csv \
   --all \
   --commit \
   --quiet \
   --progress-every 100
 ```
 
-## 8. Import historical vital signs
-
-For the exact affected local OpenEMR 8.0.0.3 target, verify the local
-compatibility patch first:
-
-```bash
-python3 scripts/ensure_local_vitals_api_compat.py
-```
-
-Import every supported grouped vital form:
+### Vital signs
 
 ```bash
 python3 -u scripts/import_openemr_vitals.py \
+  --observations-csv output/gta-100-v2/csv/observations.csv \
   --all \
   --commit \
   --quiet \
   --progress-every 100
 ```
 
-A completed rerun should create zero forms and skip every supported grouped form.
-Do not apply the OpenEMR 8.0.0.3 compatibility patch to OpenEMR 7 or another
-OpenEMR version.
-
 ## Important behavior
 
-- Without `--commit`, import scripts perform a dry run.
-- Re-running a completed command should skip records already imported.
-- Generated mappings and OAuth credentials are stored under `.local/`.
-- Never commit `.local/`, passwords, access tokens, client secrets, or generated output logs.
-- Use `--help` to inspect a script's current options.
-
-```bash
-python3 scripts/import_openemr_encounters.py --help
-python3 scripts/import_openemr_conditions.py --help
-python3 scripts/import_openemr_allergies.py --help
-python3 scripts/import_openemr_medications.py --help
-python3 scripts/import_openemr_vitals.py --help
-```
-
-## Current import order
-
-1. Patients
-2. Encounters
-3. Curated medical problems
-4. Curated allergies
-5. Medications
-6. Selected observations and vitals
-7. Selected procedures
-8. Immunizations
-9. Optional care plans and other selected resources
+- Without `--commit`, the orchestrator performs preflight only.
+- Re-running the same selected dataset should skip tracked records.
+- `output/current-dataset.json` selects the normal default dataset.
+- `.local/import-context.json` binds maps to one dataset and OpenEMR target.
+- Do not reuse `.local` maps for a different generation or OpenEMR installation.
+- Never commit `.local/`, generated `output/`, secrets, or access tokens.
+- Use `--help` to inspect current options.

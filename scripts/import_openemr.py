@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
@@ -22,7 +24,8 @@ from import_openemr_patients import get_access_token, load_json, save_json
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
-DEFAULT_CSV_DIR = ROOT / "output/gta-100-v2/csv"
+CURRENT_DATASET_FILE = ROOT / "output/current-dataset.json"
+IMPORT_CONTEXT_FILE = ROOT / ".local/import-context.json"
 CLIENT_FILE = ROOT / ".local/openemr-client.json"
 PATIENT_MAP_FILE = ROOT / ".local/patient-import-map.json"
 ENCOUNTER_MAP_FILE = ROOT / ".local/encounter-import-map.json"
@@ -125,10 +128,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--csv-dir",
         type=Path,
-        default=DEFAULT_CSV_DIR,
         help=(
-            "Directory containing the selected Synthea CSV files. "
-            f"Default: {DEFAULT_CSV_DIR}"
+            "Directory containing a selected Synthea CSV dataset. When omitted, "
+            "use output/current-dataset.json or the only discoverable dataset."
         ),
     )
     parser.add_argument(
@@ -169,6 +171,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List supported and intentionally unsupported resources, then exit.",
     )
+    parser.add_argument(
+        "--adopt-existing-state",
+        action="store_true",
+        help=(
+            "Bind existing legacy .local import maps to the selected dataset and "
+            "OpenEMR target. Use only after verifying those maps belong together."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -199,6 +209,256 @@ def require_files(paths: Iterable[Path], description: str) -> None:
     if missing:
         rendered = "\n".join(f"  - {path}" for path in missing)
         raise RuntimeError(f"Missing {description}:\n{rendered}")
+
+
+def root_path(path: Path) -> Path:
+    return path.expanduser().resolve() if path.is_absolute() else (ROOT / path).resolve()
+
+
+def required_dataset_filenames() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                filename
+                for resource in RESOURCE_ORDER
+                for _, filename in resource.csv_arguments
+            }
+        )
+    )
+
+
+def valid_csv_dir(path: Path) -> bool:
+    return path.is_dir() and all(
+        (path / filename).is_file()
+        for filename in required_dataset_filenames()
+    )
+
+
+def read_current_dataset() -> tuple[Path, dict[str, object]] | None:
+    if not CURRENT_DATASET_FILE.is_file():
+        return None
+
+    try:
+        data = json.loads(CURRENT_DATASET_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Could not read {CURRENT_DATASET_FILE}: {error}"
+        ) from error
+
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Expected a JSON object in {CURRENT_DATASET_FILE}")
+
+    value = str(data.get("csv_directory") or "").strip()
+    if not value:
+        raise RuntimeError(
+            f"{CURRENT_DATASET_FILE} does not contain csv_directory."
+        )
+
+    csv_dir = root_path(Path(value))
+    if not valid_csv_dir(csv_dir):
+        raise RuntimeError(
+            f"The current dataset manifest points to an incomplete or missing "
+            f"CSV directory: {csv_dir}. Regenerate data or pass --csv-dir."
+        )
+    return csv_dir, data
+
+
+def discover_csv_dirs() -> list[Path]:
+    output = ROOT / "output"
+    if not output.is_dir():
+        return []
+
+    candidates = {
+        path.resolve()
+        for path in output.rglob("csv")
+        if valid_csv_dir(path)
+    }
+    return sorted(candidates)
+
+
+def resolve_csv_dir(explicit: Path | None) -> tuple[Path, dict[str, object] | None, str]:
+    if explicit is not None:
+        csv_dir = root_path(explicit)
+        if not valid_csv_dir(csv_dir):
+            required = "\n".join(
+                f"  - {csv_dir / filename}"
+                for filename in required_dataset_filenames()
+                if not (csv_dir / filename).is_file()
+            )
+            raise RuntimeError(
+                f"The selected CSV directory is incomplete: {csv_dir}\n{required}"
+            )
+        return csv_dir, None, "explicit --csv-dir"
+
+    current = read_current_dataset()
+    if current is not None:
+        csv_dir, manifest = current
+        return csv_dir, manifest, str(CURRENT_DATASET_FILE)
+
+    candidates = discover_csv_dirs()
+    if not candidates:
+        raise RuntimeError(
+            "No complete Synthea CSV dataset was found. Run "
+            "python3 scripts/generate_gta_patients.py first or pass --csv-dir."
+        )
+    if len(candidates) > 1:
+        rendered = "\n".join(f"  - {path}" for path in candidates)
+        raise RuntimeError(
+            "Multiple complete CSV datasets were found and none is selected by "
+            f"{CURRENT_DATASET_FILE}. Generate/select a current dataset or pass "
+            f"--csv-dir explicitly:\n{rendered}"
+        )
+    return candidates[0], None, "only complete dataset discovered under output/"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def dataset_fingerprint(csv_dir: Path) -> str:
+    identity = [
+        {
+            "name": path.name,
+            "size_bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+        for path in sorted(csv_dir.glob("*.csv"))
+    ]
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def import_map_files() -> list[Path]:
+    local = ROOT / ".local"
+    if not local.is_dir():
+        return []
+    return sorted(path for path in local.glob("*-import-map.json") if path.is_file())
+
+
+def client_target() -> str:
+    if not CLIENT_FILE.is_file():
+        return ""
+    try:
+        data = json.loads(CLIENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not read {CLIENT_FILE}: {error}") from error
+    return str(data.get("base_url") or "").strip().rstrip("/")
+
+
+def write_current_dataset_selection(csv_dir: Path, fingerprint: str) -> None:
+    CURRENT_DATASET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    value = {
+        "schema_version": 1,
+        "selected_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "selection_source": "existing CSV directory",
+        "csv_directory": (
+            csv_dir.relative_to(ROOT).as_posix()
+            if csv_dir.is_relative_to(ROOT)
+            else str(csv_dir)
+        ),
+        "dataset_fingerprint": fingerprint,
+    }
+    temporary = CURRENT_DATASET_FILE.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(CURRENT_DATASET_FILE)
+
+
+def write_import_context(csv_dir: Path, fingerprint: str, target: str) -> None:
+    IMPORT_CONTEXT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    value = {
+        "schema_version": 1,
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "csv_directory": (
+            csv_dir.relative_to(ROOT).as_posix()
+            if csv_dir.is_relative_to(ROOT)
+            else str(csv_dir)
+        ),
+        "dataset_fingerprint": fingerprint,
+        "openemr_base_url": target,
+    }
+    temporary = IMPORT_CONTEXT_FILE.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(IMPORT_CONTEXT_FILE)
+
+
+def validate_import_context(
+    csv_dir: Path,
+    *,
+    commit: bool,
+    adopt_existing_state: bool,
+) -> None:
+    fingerprint = dataset_fingerprint(csv_dir)
+    target = client_target()
+    maps = import_map_files()
+
+    if IMPORT_CONTEXT_FILE.is_file():
+        try:
+            context = json.loads(IMPORT_CONTEXT_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(
+                f"Could not read {IMPORT_CONTEXT_FILE}: {error}"
+            ) from error
+
+        expected_fingerprint = str(context.get("dataset_fingerprint") or "")
+        expected_target = str(context.get("openemr_base_url") or "").rstrip("/")
+        if expected_fingerprint != fingerprint:
+            raise RuntimeError(
+                "The selected dataset does not match the dataset bound to the "
+                f"existing .local import state. Bound CSV directory: "
+                f"{context.get('csv_directory') or '(unknown)'}. Archive or remove "
+                ".local import maps before importing a different generation."
+            )
+        if target and expected_target and expected_target != target:
+            raise RuntimeError(
+                "The saved import maps belong to a different OpenEMR target. "
+                f"Bound target: {expected_target}; selected target: {target}. "
+                "Use separate .local state for each OpenEMR installation."
+            )
+        print(f"Import state: matched {IMPORT_CONTEXT_FILE}")
+        return
+
+    if maps:
+        if not adopt_existing_state:
+            rendered = "\n".join(f"  - {path.name}" for path in maps)
+            raise RuntimeError(
+                "Legacy import maps exist but are not yet bound to a dataset and "
+                "OpenEMR target. Verify that the selected CSV directory and client "
+                "belong to these maps, then rerun once with --adopt-existing-state:\n"
+                + rendered
+            )
+        if not target:
+            raise RuntimeError(
+                f"Cannot adopt existing state without {CLIENT_FILE}. Register or "
+                "restore the matching OpenEMR client first."
+            )
+        write_import_context(csv_dir, fingerprint, target)
+        print(f"Adopted existing import maps into {IMPORT_CONTEXT_FILE}")
+        return
+
+    if adopt_existing_state:
+        raise RuntimeError(
+            "--adopt-existing-state was supplied, but no existing import maps were found."
+        )
+
+    if commit:
+        if not target:
+            raise RuntimeError(
+                f"Cannot bind new import state without {CLIENT_FILE}."
+            )
+        write_import_context(csv_dir, fingerprint, target)
+        print(f"Created new import context: {IMPORT_CONTEXT_FILE}")
+    else:
+        print("Import state: new dataset/target binding will be created on first commit.")
 
 
 def validate_map_dependencies(resources: list[Resource]) -> None:
@@ -385,7 +645,7 @@ def main() -> int:
             print_resource_inventory()
             return 0
 
-        csv_dir = args.csv_dir.resolve()
+        csv_dir, manifest, selection_source = resolve_csv_dir(args.csv_dir)
         resources = selected_resources(args.resource)
 
         if not resources:
@@ -409,8 +669,24 @@ def main() -> int:
                 "scripts/register_openemr_client.py first."
             )
 
+        validate_import_context(
+            csv_dir,
+            commit=args.commit,
+            adopt_existing_state=args.adopt_existing_state,
+        )
+        if args.adopt_existing_state and args.csv_dir is not None:
+            fingerprint = dataset_fingerprint(csv_dir)
+            write_current_dataset_selection(csv_dir, fingerprint)
+            print(f"Selected existing dataset in {CURRENT_DATASET_FILE}")
+
         print("Maple Grove supported OpenEMR import")
         print(f"CSV directory: {csv_dir}")
+        print(f"Dataset selection: {selection_source}")
+        if manifest:
+            print(
+                "Dataset fingerprint: "
+                f"{manifest.get('dataset_fingerprint') or '(not recorded)'}"
+            )
         print(f"Mode: {'COMMIT' if args.commit else 'PREFLIGHT ONLY'}")
         print("Selected resources:")
 

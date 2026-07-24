@@ -63,7 +63,7 @@ Open WSL and run:
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-17-jdk-headless python3 python3-venv
+sudo apt install -y openjdk-17-jdk-headless python3 python3-venv python3-venv
 ```
 
 Then verify:
@@ -155,43 +155,97 @@ pwd
 
 ---
 
-## 7. Generate GTA synthetic patient CSV files
+## 7. Prepare Python and generate GTA CSV files
 
-The final one-command generator will be added as:
+Create and activate a project-local Python environment:
 
 ```bash
-python3 scripts/generate_gta_patients.py
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements_openemr_import.txt
 ```
 
-Until that script is completed and tested, follow the current maintainer
-instructions rather than inventing a different Java command.
+Generate a fresh 100-patient dataset:
 
-Generated files will be written under:
-
-```text
-output/
+```bash
+python3 scripts/generate_gta_patients.py --population 100
 ```
+
+The generator:
+
+- uses the pinned GTA Synthea JAR under `dist/`;
+- uses `config/synthea-gta.properties`;
+- creates a unique run below `output/runs/`;
+- verifies the CSV files required by the supported importer;
+- records hashes, row counts, and the selected CSV directory in
+  `output/current-dataset.json`.
+
+A different population size can be requested, for example:
+
+```bash
+python3 scripts/generate_gta_patients.py --population 25
+```
+
+Do not rename generated run folders merely to satisfy an importer default. The
+orchestrator reads the current dataset manifest.
 
 ---
 
-## 8. Import selected data into OpenEMR
+## 8. Configure OpenEMR and import the supported data
 
-Resource-specific OpenEMR import scripts are implemented through historical
-vital signs. The final one-command student orchestrator is still under development.
-For current commands, see `docs/IMPORT_QUICK_REFERENCE.md`.
+Detect the OpenEMR target:
 
-The dependency-oriented import order is:
+```bash
+python3 scripts/detect_openemr.py
+```
 
-1. patients;
-2. encounters;
-3. conditions;
-4. allergies;
-5. medications;
-6. selected observations;
-7. procedures and immunizations.
+For the local Docker target, ensure HTTPS is available:
 
-The importer will use the OpenEMR Standard REST API rather than writing
-directly to the OpenEMR database.
+```bash
+python3 scripts/ensure_local_https.py
+```
+
+Register an OAuth client:
+
+```bash
+python3 scripts/register_openemr_client.py
+```
+
+Open OpenEMR and enable the newest client under:
+
+```text
+Administration -> System -> API Clients
+```
+
+Test the connection:
+
+```bash
+python3 scripts/test_openemr_connection.py
+```
+
+Preflight the selected dataset without creating records:
+
+```bash
+python3 scripts/import_openemr.py
+```
+
+Run the complete supported workflow:
+
+```bash
+python3 scripts/import_openemr.py \
+  --commit \
+  --quiet \
+  --progress-every 100
+```
+
+The workflow imports patients, encounters, curated conditions, curated
+allergies, medications, and supported vital signs in dependency order. Local
+credentials and resumable maps are stored under `.local/` and must not be
+committed.
+
+Generic procedures, immunizations, care plans, devices, imaging studies, and
+supplies are not redirected into unrelated OpenEMR resources when a suitable
+writable API is unavailable.
 
 ---
 
