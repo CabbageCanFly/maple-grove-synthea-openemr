@@ -235,7 +235,7 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: allergies
+## Current development phase: medications
 
 Encounter importing is complete. The next planned resource is `conditions.csv`.
 
@@ -438,6 +438,27 @@ Standard medical-problem API does not create an encounter issue link.
 Next planned resource: `allergies.csv`.
 
 <!-- END CONDITION-IMPORT-MILESTONE -->
+
+<!-- BEGIN ALLERGY-IMPORT-MILESTONE -->
+
+## Allergy importer status
+
+Completed on 2026-07-23.
+
+- Audited 101 Synthea allergy rows.
+- Excluded 18 generic `Allergic disposition (finding)` rows.
+- Imported 83 specific allergies and intolerances.
+- Full import: Created 82, Skipped 1, Failed 0.
+- Full rerun: Created 0, Skipped 83, Failed 0.
+- No source duplicates or missing patient and encounter mappings were found.
+- OpenEMR stores the allergen title, start date, source code, overall severity,
+  and combined reaction descriptions.
+- Synthea type, category, reaction codes, individual reaction severities, and
+  source encounter references remain preserved in the local allergy map.
+
+Next planned resource: `medications.csv`.
+
+<!-- END ALLERGY-IMPORT-MILESTONE -->
 
 ## Wider Synthea CSV import order
 
