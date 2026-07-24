@@ -684,6 +684,46 @@ Next planned resource: `procedures.csv`.
 
 <!-- END VITAL-IMPORT-MILESTONE -->
 
+<!-- BEGIN PROCEDURE-IMPORT-DECISION -->
+
+## Procedure importer status
+
+Audited on 2026-07-24 for the current validation dataset.
+
+Source coverage:
+
+- 14,309 procedure rows;
+- 105 referenced patients;
+- 3,597 referenced encounters;
+- no missing patient or encounter mappings;
+- no exact duplicate rows;
+- no repeated or conflicting patient/encounter/start/code groups;
+- complete procedure codes, descriptions, encounter references, and base costs;
+- 7,547 rows without an optional reason.
+
+The installed local OpenEMR 8.0.0.3 Swagger specification exposes only:
+
+- `GET /api/procedure`
+- `GET /api/procedure/{uuid}`
+- `GET /fhir/Procedure`
+- `GET /fhir/Procedure/{uuid}`
+
+No Standard REST or FHIR procedure-creation endpoint is available. Therefore,
+historical Synthea procedures cannot be imported through the required API interface.
+
+The project will not misrepresent performed procedures as procedure orders, billing
+charges, encounter notes, or other unrelated OpenEMR resources. Direct database
+writes and a version-specific custom server module are outside the current portable
+student workflow.
+
+Procedure coverage is consequently classified as audited but unsupported for API
+creation. The audit script remains useful for documenting source coverage and for
+detecting whether a future OpenEMR version adds a writable procedure endpoint.
+
+Next planned resource: `immunizations.csv`.
+
+<!-- END PROCEDURE-IMPORT-DECISION -->
+
 ## Wider Synthea CSV import order
 
 Dependency-oriented target order:
