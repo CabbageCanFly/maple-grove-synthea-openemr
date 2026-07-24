@@ -127,6 +127,47 @@ python3 -u scripts/import_openemr_allergies.py \
 
 Generic `Allergic disposition (finding)` rows are excluded automatically.
 
+## 7. Import medications
+
+Dry-run one medication episode:
+
+```bash
+python3 scripts/import_openemr_medications.py --limit 1
+```
+
+Import all medication episodes:
+
+```bash
+python3 -u scripts/import_openemr_medications.py \
+  --all \
+  --commit \
+  --quiet \
+  --progress-every 100
+```
+
+## 8. Import historical vital signs
+
+For the exact affected local OpenEMR 8.0.0.3 target, verify the local
+compatibility patch first:
+
+```bash
+python3 scripts/ensure_local_vitals_api_compat.py
+```
+
+Import every supported grouped vital form:
+
+```bash
+python3 -u scripts/import_openemr_vitals.py \
+  --all \
+  --commit \
+  --quiet \
+  --progress-every 100
+```
+
+A completed rerun should create zero forms and skip every supported grouped form.
+Do not apply the OpenEMR 8.0.0.3 compatibility patch to OpenEMR 7 or another
+OpenEMR version.
+
 ## Important behavior
 
 - Without `--commit`, import scripts perform a dry run.
@@ -139,6 +180,8 @@ Generic `Allergic disposition (finding)` rows are excluded automatically.
 python3 scripts/import_openemr_encounters.py --help
 python3 scripts/import_openemr_conditions.py --help
 python3 scripts/import_openemr_allergies.py --help
+python3 scripts/import_openemr_medications.py --help
+python3 scripts/import_openemr_vitals.py --help
 ```
 
 ## Current import order

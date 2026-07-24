@@ -82,6 +82,8 @@ Cities included:
 
 - File: `synthea-gta-maple-grove.jar`
 - SHA-256: `8750f500d12e9e91c441365123ed4714607ce4f7239cf1b4b6f6c92c6d1cc2f8`
+- The verified build artifact was versioned for distribution as
+  `synthea-gta-maple-grove-v0.1.1.jar` in GitHub Releases.
 
 ## Known limitations
 

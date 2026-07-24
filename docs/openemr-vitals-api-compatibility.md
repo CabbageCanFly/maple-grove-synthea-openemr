@@ -161,8 +161,11 @@ For the current 105-patient validation dataset:
 - pediatric head circumference imported successfully in inches;
 - a mixed 25-form batch imported successfully;
 - the exact same 25-form selection was skipped on repeat import;
-- all 1,503 dynamically discovered supported grouped vital forms were processed;
-- a complete repeat run created zero forms, skipped all 1,503 forms, and failed zero forms.
+- the first complete pass processed all 1,503 grouped forms with 1,474 created,
+  29 skipped, and 0 failed;
+- the first complete pass omitted 12 conflicting fields and collapsed 2 exact duplicate
+  source rows according to the documented policy;
+- complete acceptance rerun: 0 created, 1,503 skipped, and 0 failed.
 
 These counts are validation evidence for the current dataset, not hard-coded
 import targets. Future datasets are discovered and grouped dynamically.

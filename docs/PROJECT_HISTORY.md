@@ -52,7 +52,12 @@ The customized GTA JAR now generates:
 - names without numeric suffixes;
 - reproducible output when fixed seeds and dates are used.
 
-## Next phase
+## Current direction
 
-Develop a Python process that validates and transforms selected Synthea CSV
-files, then imports them through the OpenEMR Standard REST API.
+The Python API workflow is implemented and validated through patients, encounters,
+curated conditions, allergies, medications, and historical vital signs, including the
+complete all-skipped vital acceptance rerun. The current work is to verify exact OpenEMR
+procedure write capabilities and select only procedure mappings that preserve the
+source's clinical meaning.
+
+Validation marker: complete acceptance rerun: 0 created, 1,503 skipped, and 0 failed.

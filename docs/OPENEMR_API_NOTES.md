@@ -52,6 +52,19 @@ For these allergy rows:
 - preserve the original `SYSTEM` and `CODE` in `.local/allergy-import-map.json`;
 - only send a diagnosis code when its coding system is known and maps to a recognized OpenEMR code type.
 
+## Encounter-vitals API
+
+OpenEMR 8.0.0.3 encounter-vitals behavior, the authenticated-session defect,
+partial-write risk, exact-version local compatibility patch, and empty-collection
+HTTP 404 behavior are documented in:
+
+```text
+docs/openemr-vitals-api-compatibility.md
+```
+
+A failed POST must not be retried automatically when the server may already have
+saved clinical rows. Reconcile the response, target records, and local import map first.
+
 ## General importer rule
 
 An OpenEMR response should count as successful only after checking:

@@ -137,8 +137,8 @@ Completed functionality:
 - Local import tracking and duplicate protection exist
 
 Patient, encounter, condition, allergy, medication, and selected vital-sign import
-stages are implemented as separate resumable scripts. The final local vital-sign
-bulk acceptance run and all-skipped rerun are still in progress.
+stages are implemented as separate resumable scripts. Local vital-sign acceptance is
+complete, including a complete all-skipped rerun.
 
 The current local validation dataset contains 105 Synthea patients mapped to OpenEMR
 patient identifiers. This is test evidence only; the patient importer must support the
@@ -154,7 +154,7 @@ patient count present in any selected generated dataset.
 4. Built and tested `synthea-gta-maple-grove-v0.1.1.jar`.
 5. Distributed the JAR through GitHub Releases rather than committing it to Git.
 6. Added a beginner-facing student setup guide.
-7. Added `PROJECT_STATE.md` as the permanent project and AI handoff.
+7. Added `docs/PROJECT_STATE.md` as the permanent project and AI handoff.
 8. Added the Python importer dependency and configuration scaffold.
 9. Removed obsolete Synthea build-recording helpers.
 10. Built `detect_openemr.py` to detect Docker containers, published ports, and
@@ -201,8 +201,9 @@ patient count present in any selected generated dataset.
     reversible local compatibility script.
 31. Validated the Neville Schuster historical pilot, repeat-run duplicate protection,
     temperature, oxygen saturation, pediatric head circumference, and an exact mixed
-    25-form batch with an all-skipped repeat. The final 1,503-form acceptance run remains
-    in progress and must not be recorded as complete until its final rerun is all-skipped.
+    25-form batch with an all-skipped repeat. Completed the first full 1,503-form pass
+    with 1,474 created, 29 skipped, and 0 failed, followed by the complete acceptance
+    rerun with 0 created, 1,503 skipped, and 0 failed.
 
 The numeric results above describe the current development dataset. They are not
 fixed targets for future student-generated datasets.
@@ -273,11 +274,12 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: vital-sign completion and procedures audit
+## Current development phase: procedure capability analysis
 
-Medication importing is complete for the current validation dataset. The observations
-source has been audited and its first supported subset, historical vital signs, is in the
-final local acceptance stage.
+Medication and historical vital-sign importing are complete for the current validation
+dataset. The vital importer passed both its first complete import and its complete
+all-skipped acceptance rerun. The procedures source has been audited and is ready for
+OpenEMR destination and write-capability analysis.
 
 Current observations evidence:
 
@@ -314,14 +316,16 @@ Validated locally so far:
 - populated OpenEMR user attribution after the compatibility fix;
 - an immediate Neville rerun skipped safely;
 - temperature, oxygen saturation, and pediatric head-circumference pilots;
-- an exact mixed 25-form batch and all-skipped repeat.
+- an exact mixed 25-form batch and all-skipped repeat;
+- first complete pass: 1,474 created, 29 skipped, and 0 failed;
+- 12 conflicting fields omitted according to policy;
+- 2 exact duplicate source rows collapsed according to policy.
 
-Final local vital-sign acceptance criteria:
+Final local vital-sign acceptance:
 
-1. process all 1,503 currently discovered grouped forms with zero failures;
-2. rerun the complete selection and create zero, skip 1,503, fail zero;
-3. update the compatibility notes and this file with the observed final split;
-4. commit the importer, observations audit, compatibility script, and documentation.
+- first complete pass: 1,474 created, 29 skipped, and 0 failed;
+- complete acceptance rerun: 0 created, 1,503 skipped, and 0 failed;
+- local vital-sign implementation is complete for the supported OpenEMR 8.0.0.3 scope.
 
 The current importer is slower than earlier list-style imports because each vital form is
 an encounter-linked clinical form and the safety path may require both a collection lookup
@@ -610,8 +614,8 @@ Next planned resource: `observations.csv`.
 
 ## Vital-sign importer status
 
-Implemented on 2026-07-24 for the current validation dataset; final complete-run
-acceptance is in progress.
+Completed on 2026-07-24 for the current validation dataset, including the
+complete all-skipped acceptance rerun.
 
 Source coverage:
 
@@ -658,13 +662,16 @@ Completed validation:
 - temperature pilot;
 - oxygen-saturation pilot;
 - pediatric head-circumference pilot;
-- exact mixed 25-form batch and exact all-skipped repeat.
+- exact mixed 25-form batch and exact all-skipped repeat;
+- first complete pass: 1,474 created, 29 skipped, and 0 failed;
+- 12 conflicting fields omitted from otherwise importable forms;
+- 2 exact duplicate source rows collapsed.
 
-Pending acceptance:
+Final acceptance:
 
-- complete all-discovered-form run with zero failures;
-- complete rerun with zero created and every discovered form skipped;
-- record the observed created/skipped split without turning it into a hard-coded target.
+- complete acceptance rerun: 0 created, 1,503 skipped, and 0 failed;
+- local OpenEMR 8.0.0.3 vital-sign validation is complete for the supported scope;
+- current counts remain validation evidence rather than hard-coded targets.
 
 AWS OpenEMR 7 remains a separate compatibility target. Do not apply the 8.0.0.3 patch
 remotely. Record the exact AWS release, scopes, endpoint behavior, user attribution,
@@ -888,26 +895,27 @@ To continue the procedures phase without guessing, preserve or provide:
 
 ## Immediate next development step
 
-Finish the current vital bulk run and complete the exact all-skipped rerun. In parallel,
-run the read-only `procedures.csv` audit.
+1. Inspect the exact OpenEMR 8.0.0.3 Standard and FHIR capabilities for creating
+   procedure records before writing any procedure importer.
+2. Select an honest, clinically meaningful procedure scope only if a supported write
+   destination exists; otherwise document procedures as read-only/unsupported for the
+   current API and move to the next resource.
 
-The procedure audit must report:
+Current `procedures.csv` audit evidence:
 
-- discovered row count, not an expected fixed count;
-- unique patient and encounter references;
-- date range;
-- code and description frequencies;
-- reason-code and reason-description frequencies;
-- base-cost completeness and distribution;
-- missing patient or encounter mappings;
-- exact duplicate rows;
-- repeated same patient/encounter/date/code groups, separated into identical and
-  conflicting variants;
-- exploratory description buckets that help distinguish imaging, surgery, therapy,
-  screening/diagnostic, and other procedure concepts.
+- 14,309 rows across 105 patients and 3,597 encounters;
+- source range from 1997-06-21 through 2026-07-22;
+- no missing patient or encounter mappings;
+- no blank procedure codes or descriptions;
+- no exact duplicate rows;
+- no repeated patient/encounter/start/code groups;
+- 7,547 rows without a reason code or description;
+- all 14,309 base costs are numeric and nonnegative, but synthetic base cost must not
+  be treated as Ontario billing data;
+- the source mixes screenings, assessments, dental care, dialysis, injections,
+  prenatal procedures, imaging, surgery, and other therapies, so it should not be
+  forced wholesale into a single OpenEMR workflow.
 
-After the audit, inspect the available OpenEMR 8 Standard and FHIR procedure routes before
-choosing a destination. Do not assume every Synthea procedure should become an OpenEMR
-billing procedure, encounter issue, order, or FHIR Procedure resource. Select a reduced,
-clinically meaningful scope only after route capability and UI placement are verified.
-
+The audit's description buckets are exploratory and nonexclusive. Its output key
+`same_patient_encounter_date_code` should be renamed to
+`same_patient_encounter_start_code` before the audit script is committed.
