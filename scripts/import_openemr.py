@@ -1,369 +1,452 @@
 #!/usr/bin/env python3
-"""Import Synthea patient demographics through the OpenEMR Standard API."""
+"""Run supported Synthea-to-OpenEMR importers in dependency order."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import os
+import shlex
+import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Iterable
+from urllib.parse import urlparse
 
-import requests
-import urllib3
-
-from detect_openemr import detect
+# Backward-compatible exports for the existing resource importers. They
+# historically imported these helpers from import_openemr.py when that file
+# was the patient-only importer.
+from import_openemr_patients import get_access_token, load_json, save_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PATIENTS_CSV = ROOT / "output/gta-100-v2/csv/patients.csv"
+SCRIPTS_DIR = ROOT / "scripts"
+DEFAULT_CSV_DIR = ROOT / "output/gta-100-v2/csv"
 CLIENT_FILE = ROOT / ".local/openemr-client.json"
-IMPORT_MAP_FILE = ROOT / ".local/patient-import-map.json"
+PATIENT_MAP_FILE = ROOT / ".local/patient-import-map.json"
+ENCOUNTER_MAP_FILE = ROOT / ".local/encounter-import-map.json"
 
 
-def clean(value: str | None) -> str:
-    return (value or "").strip()
+@dataclass(frozen=True)
+class Resource:
+    name: str
+    label: str
+    script: str
+    csv_arguments: tuple[tuple[str, str], ...]
+    supports_quiet: bool = False
+    supports_progress: bool = False
+    requires_patient_map: bool = False
+    requires_encounter_map: bool = False
 
 
-def map_patient(row: dict[str, str]) -> dict[str, str]:
-    sex = {
-        "M": "Male",
-        "F": "Female",
-    }.get(clean(row.get("GENDER")).upper(), clean(row.get("GENDER")))
+RESOURCE_ORDER: tuple[Resource, ...] = (
+    Resource(
+        name="patients",
+        label="Patients",
+        script="import_openemr_patients.py",
+        csv_arguments=(("--patients-csv", "patients.csv"),),
+    ),
+    Resource(
+        name="encounters",
+        label="Encounters",
+        script="import_openemr_encounters.py",
+        csv_arguments=(
+            ("--encounters-csv", "encounters.csv"),
+            ("--organizations-csv", "organizations.csv"),
+            ("--providers-csv", "providers.csv"),
+        ),
+        supports_progress=True,
+        requires_patient_map=True,
+    ),
+    Resource(
+        name="conditions",
+        label="Conditions",
+        script="import_openemr_conditions.py",
+        csv_arguments=(("--conditions-csv", "conditions.csv"),),
+        supports_quiet=True,
+        supports_progress=True,
+        requires_patient_map=True,
+        requires_encounter_map=True,
+    ),
+    Resource(
+        name="allergies",
+        label="Allergies",
+        script="import_openemr_allergies.py",
+        csv_arguments=(("--allergies-csv", "allergies.csv"),),
+        supports_quiet=True,
+        supports_progress=True,
+        requires_patient_map=True,
+        requires_encounter_map=True,
+    ),
+    Resource(
+        name="medications",
+        label="Medications",
+        script="import_openemr_medications.py",
+        csv_arguments=(("--medications-csv", "medications.csv"),),
+        supports_quiet=True,
+        supports_progress=True,
+        requires_patient_map=True,
+        requires_encounter_map=True,
+    ),
+    Resource(
+        name="vitals",
+        label="Vital signs",
+        script="import_openemr_vitals.py",
+        csv_arguments=(("--observations-csv", "observations.csv"),),
+        supports_quiet=True,
+        supports_progress=True,
+        requires_patient_map=True,
+        requires_encounter_map=True,
+    ),
+)
 
-    patient = {
-        "fname": clean(row.get("FIRST")),
-        "lname": clean(row.get("LAST")),
-        "DOB": clean(row.get("BIRTHDATE")),
-        "sex": sex,
-        "street": clean(row.get("ADDRESS")),
-        "city": clean(row.get("CITY")),
-        "state": clean(row.get("STATE")),
-        "postal_code": clean(row.get("ZIP")),
-    }
+RESOURCE_BY_NAME = {resource.name: resource for resource in RESOURCE_ORDER}
 
-    optional_fields = {
-        "title": clean(row.get("PREFIX")),
-        "mname": clean(row.get("MIDDLE")),
-    }
-
-    patient.update(
-        {
-            field: value
-            for field, value in optional_fields.items()
-            if value
-        }
-    )
-
-    missing = [
-        field
-        for field in ("fname", "lname", "DOB", "sex")
-        if not patient.get(field)
-    ]
-
-    if missing:
-        raise ValueError(
-            "Patient is missing required field(s): " + ", ".join(missing)
-        )
-
-    return patient
-
-
-def duplicate_key(patient: dict[str, Any]) -> tuple[str, ...]:
-    return (
-        clean(str(patient.get("fname"))).casefold(),
-        clean(str(patient.get("lname"))).casefold(),
-        clean(str(patient.get("DOB"))),
-        clean(str(patient.get("postal_code"))).replace(" ", "").casefold(),
-    )
-
-
-def load_json(path: Path, default: Any) -> Any:
-    if not path.is_file():
-        return default
-
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def save_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-
-
-def get_access_token(client: dict[str, Any]) -> str:
-    username = os.getenv("OPENEMR_USERNAME", "admin")
-    password = os.getenv("OPENEMR_PASSWORD", "pass")
-
-    response = requests.post(
-        client["token_endpoint"],
-        data={
-            "grant_type": "password",
-            "client_id": client["client_id"],
-            "scope": client["scope"],
-            "user_role": "users",
-            "username": username,
-            "password": password,
-        },
-        verify=False,
-        timeout=30,
-    )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Token request returned HTTP {response.status_code}: "
-            f"{response.text[:500]}"
-        )
-
-    token = response.json().get("access_token")
-
-    if not token:
-        raise RuntimeError("OpenEMR did not return an access token.")
-
-    return token
-
-
-def get_existing_patients(
-    api_base_url: str,
-    token: str,
-) -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{api_base_url}/patient",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-        },
-        verify=False,
-        timeout=30,
-    )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Patient lookup returned HTTP {response.status_code}: "
-            f"{response.text[:500]}"
-        )
-
-    data = response.json().get("data", [])
-    return data if isinstance(data, list) else []
-
-
-def create_patient(
-    api_base_url: str,
-    token: str,
-    patient: dict[str, str],
-) -> dict[str, Any]:
-    response = requests.post(
-        f"{api_base_url}/patient",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-        },
-        json=patient,
-        verify=False,
-        timeout=30,
-    )
-
-    try:
-        body = response.json()
-    except requests.JSONDecodeError:
-        body = {}
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Patient creation returned HTTP {response.status_code}: "
-            f"{response.text[:1000]}"
-        )
-
-    validation_errors = body.get("validationErrors") or []
-    internal_errors = body.get("internalErrors") or []
-
-    if validation_errors or internal_errors:
-        raise RuntimeError(
-            "OpenEMR rejected the patient: "
-            + json.dumps(
-                {
-                    "validationErrors": validation_errors,
-                    "internalErrors": internal_errors,
-                }
-            )
-        )
-
-    data = body.get("data", {})
-    return data if isinstance(data, dict) else {}
+UNSUPPORTED_RESOURCES: tuple[tuple[str, str], ...] = (
+    ("procedures.csv", "generic Procedure creation is unavailable; optional surgery subset deferred"),
+    ("immunizations.csv", "installed Standard/FHIR routes are read-only"),
+    ("careplans.csv", "installed FHIR routes are read-only"),
+    ("devices.csv", "installed FHIR routes are read-only"),
+    ("imaging_studies.csv", "no writable matching imaging resource"),
+    ("supplies.csv", "no matching API route"),
+    ("claims*.csv and payer files", "financial/insurance mapping is outside the current clinical import scope"),
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Import Synthea patient demographics into OpenEMR."
+        description=(
+            "Preflight or run all supported Synthea CSV imports in safe "
+            "dependency order. Without --commit, only validate and print "
+            "the execution plan."
+        )
     )
     parser.add_argument(
-        "--patients-csv",
+        "--csv-dir",
         type=Path,
-        default=DEFAULT_PATIENTS_CSV,
-        help="Path to Synthea patients.csv.",
+        default=DEFAULT_CSV_DIR,
+        help=(
+            "Directory containing the selected Synthea CSV files. "
+            f"Default: {DEFAULT_CSV_DIR}"
+        ),
     )
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=1,
-        help="Number of patients to process. Default: 1.",
-    )
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Process every patient in the CSV.",
+        "--resource",
+        action="append",
+        choices=tuple(RESOURCE_BY_NAME),
+        help=(
+            "Run only this supported resource. Repeat to select multiple "
+            "resources. Default: all supported resources."
+        ),
     )
     parser.add_argument(
         "--commit",
         action="store_true",
-        help="Actually create patients. Without this, perform a dry run.",
+        help="Actually create records. Without this flag, perform preflight only.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-record messages where the underlying importer supports it.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=100,
+        help="Progress interval passed to supporting importers. Default: 100.",
+    )
+    parser.add_argument(
+        "--skip-local-vitals-compat",
+        action="store_true",
+        help=(
+            "Do not automatically verify/apply the exact-version local "
+            "OpenEMR 8.0.0.3 vitals compatibility patch."
+        ),
+    )
+    parser.add_argument(
+        "--list-resources",
+        action="store_true",
+        help="List supported and intentionally unsupported resources, then exit.",
     )
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    patients_csv = args.patients_csv.resolve()
+def selected_resources(names: list[str] | None) -> list[Resource]:
+    if not names:
+        return list(RESOURCE_ORDER)
+
+    requested = set(names)
+    return [resource for resource in RESOURCE_ORDER if resource.name in requested]
+
+
+def print_resource_inventory() -> None:
+    print("Supported import resources")
+    for resource in RESOURCE_ORDER:
+        print(f"  {resource.name}: {resource.label}")
+
+    print("\nIntentionally unsupported or deferred")
+    for filename, reason in UNSUPPORTED_RESOURCES:
+        print(f"  {filename}: {reason}")
+
+
+def expected_csv_paths(resource: Resource, csv_dir: Path) -> list[Path]:
+    return [csv_dir / filename for _, filename in resource.csv_arguments]
+
+
+def require_files(paths: Iterable[Path], description: str) -> None:
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        rendered = "\n".join(f"  - {path}" for path in missing)
+        raise RuntimeError(f"Missing {description}:\n{rendered}")
+
+
+def validate_map_dependencies(resources: list[Resource]) -> None:
+    names = {resource.name for resource in resources}
+
+    for resource in resources:
+        if (
+            resource.requires_patient_map
+            and "patients" not in names
+            and not PATIENT_MAP_FILE.is_file()
+        ):
+            raise RuntimeError(
+                f"{resource.label} requires {PATIENT_MAP_FILE}. Include "
+                "--resource patients or run the patient import first."
+            )
+
+        if (
+            resource.requires_encounter_map
+            and "encounters" not in names
+            and not ENCOUNTER_MAP_FILE.is_file()
+        ):
+            raise RuntimeError(
+                f"{resource.label} requires {ENCOUNTER_MAP_FILE}. Include "
+                "--resource encounters or run the encounter import first."
+            )
+
+
+def build_command(
+    resource: Resource,
+    csv_dir: Path,
+    *,
+    commit: bool,
+    quiet: bool,
+    progress_every: int,
+) -> list[str]:
+    command = [sys.executable, str(SCRIPTS_DIR / resource.script)]
+
+    for flag, filename in resource.csv_arguments:
+        command.extend([flag, str(csv_dir / filename)])
+
+    command.append("--all")
+
+    if commit:
+        command.append("--commit")
+
+    if quiet and resource.supports_quiet:
+        command.append("--quiet")
+
+    if resource.supports_progress:
+        command.extend(["--progress-every", str(progress_every)])
+
+    return command
+
+
+def safe_command_text(command: list[str]) -> str:
+    return shlex.join(command)
+
+
+def read_client_base_url() -> str:
+    if not CLIENT_FILE.is_file():
+        return ""
 
     try:
-        if not patients_csv.is_file():
-            raise RuntimeError(f"CSV was not found: {patients_csv}")
+        data = json.loads(CLIENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not read {CLIENT_FILE}: {error}") from error
 
-        if args.limit < 1:
-            raise RuntimeError("--limit must be at least 1.")
+    return str(data.get("base_url") or "").strip()
 
-        with patients_csv.open(
-            newline="",
-            encoding="utf-8-sig",
-        ) as file:
-            rows = list(csv.DictReader(file))
 
-        selected_rows = rows if args.all else rows[: args.limit]
+def maybe_prepare_local_vitals(
+    resources: list[Resource],
+    *,
+    skip: bool,
+) -> None:
+    if skip or not any(resource.name == "vitals" for resource in resources):
+        return
 
-        print(f"Patients CSV: {patients_csv}")
-        print(f"Patients available: {len(rows)}")
-        print(f"Patients selected: {len(selected_rows)}")
-        print(f"Mode: {'COMMIT' if args.commit else 'DRY RUN'}")
+    base_url = read_client_base_url()
+    hostname = (urlparse(base_url).hostname or "").casefold()
 
-        if not selected_rows:
-            raise RuntimeError("The patient CSV contains no patient rows.")
+    if hostname not in {"localhost", "127.0.0.1", "::1"}:
+        print("Vitals compatibility: remote/non-local target; no local patch attempted.")
+        return
 
-        mapped = [
-            (clean(row.get("Id")), map_patient(row))
-            for row in selected_rows
-        ]
+    try:
+        from detect_openemr import detect
 
-        if not args.commit:
-            print()
-            print("First mapped patient:")
-            print(json.dumps(mapped[0][1], indent=2))
-            print()
-            print("No OpenEMR records were created.")
-            print("Add --commit only after reviewing this mapping.")
+        information = detect()
+    except RuntimeError as error:
+        raise RuntimeError(
+            "Could not inspect the local OpenEMR version before the vitals step: "
+            f"{error}"
+        ) from error
+
+    version = str(information.get("version") or "").strip()
+
+    if version != "8.0.0.3":
+        print(
+            "Vitals compatibility: no automatic patch for local OpenEMR "
+            f"{version or 'unknown'}."
+        )
+        return
+
+    command = [
+        sys.executable,
+        str(SCRIPTS_DIR / "ensure_local_vitals_api_compat.py"),
+    ]
+    print("\nPreparing local OpenEMR 8.0.0.3 vitals compatibility")
+    print(f"  {safe_command_text(command)}")
+    result = subprocess.run(command, cwd=ROOT, check=False)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Local vitals compatibility preparation failed; import stopped."
+        )
+
+
+def run_resources(
+    resources: list[Resource],
+    csv_dir: Path,
+    *,
+    quiet: bool,
+    progress_every: int,
+    skip_local_vitals_compat: bool,
+) -> int:
+    completed: list[tuple[str, float]] = []
+    started_all = time.monotonic()
+
+    for position, resource in enumerate(resources, start=1):
+        if resource.name == "vitals":
+            maybe_prepare_local_vitals(
+                resources,
+                skip=skip_local_vitals_compat,
+            )
+
+        command = build_command(
+            resource,
+            csv_dir,
+            commit=True,
+            quiet=quiet,
+            progress_every=progress_every,
+        )
+
+        print("\n" + "=" * 72)
+        print(f"STEP {position}/{len(resources)}: {resource.label}")
+        print("=" * 72)
+        print(f"Command: {safe_command_text(command)}")
+        sys.stdout.flush()
+
+        started = time.monotonic()
+        result = subprocess.run(command, cwd=ROOT, check=False)
+        elapsed = time.monotonic() - started
+
+        if result.returncode != 0:
+            print(
+                f"\nImport stopped: {resource.label} exited with status "
+                f"{result.returncode} after {elapsed:.1f} seconds.",
+                file=sys.stderr,
+            )
+            return result.returncode or 1
+
+        completed.append((resource.label, elapsed))
+
+    elapsed_all = time.monotonic() - started_all
+    print("\n" + "=" * 72)
+    print("SUPPORTED IMPORT WORKFLOW COMPLETE")
+    print("=" * 72)
+    for label, elapsed in completed:
+        print(f"  {label}: completed in {elapsed:.1f} seconds")
+    print(f"  Total elapsed: {elapsed_all:.1f} seconds")
+    print("  Access tokens were not printed or saved by the orchestrator.")
+    return 0
+
+
+def main() -> int:
+    args = parse_args()
+
+    try:
+        if args.progress_every < 0:
+            raise RuntimeError("--progress-every cannot be negative.")
+
+        if args.list_resources:
+            print_resource_inventory()
             return 0
 
-        if not CLIENT_FILE.is_file():
-            raise RuntimeError(
-                "OAuth client credentials are missing. Run "
-                "register_openemr_client.py first."
-            )
+        csv_dir = args.csv_dir.resolve()
+        resources = selected_resources(args.resource)
 
-        urllib3.disable_warnings(
-            urllib3.exceptions.InsecureRequestWarning
+        if not resources:
+            raise RuntimeError("No supported resources were selected.")
+
+        require_files(
+            [SCRIPTS_DIR / resource.script for resource in resources],
+            "importer scripts",
         )
 
-        openemr = detect()
-        client = load_json(CLIENT_FILE, {})
+        csv_paths: list[Path] = []
+        for resource in resources:
+            csv_paths.extend(expected_csv_paths(resource, csv_dir))
+        require_files(csv_paths, "Synthea CSV files")
 
-        if client.get("base_url") != openemr["base_url"]:
+        validate_map_dependencies(resources)
+
+        if args.commit and not CLIENT_FILE.is_file():
             raise RuntimeError(
-                "The saved OAuth client belongs to a different OpenEMR URL."
+                f"OAuth client credentials are missing: {CLIENT_FILE}. Run "
+                "scripts/register_openemr_client.py first."
             )
 
-        token = get_access_token(client)
-        existing_patients = get_existing_patients(
-            openemr["api_base_url"],
-            token,
+        print("Maple Grove supported OpenEMR import")
+        print(f"CSV directory: {csv_dir}")
+        print(f"Mode: {'COMMIT' if args.commit else 'PREFLIGHT ONLY'}")
+        print("Selected resources:")
+
+        for position, resource in enumerate(resources, start=1):
+            print(f"  {position}. {resource.label} ({resource.name})")
+
+        print("\nExecution plan:")
+        for resource in resources:
+            command = build_command(
+                resource,
+                csv_dir,
+                commit=args.commit,
+                quiet=args.quiet,
+                progress_every=args.progress_every,
+            )
+            print(f"  {safe_command_text(command)}")
+
+        print("\nNot included in this workflow:")
+        for filename, reason in UNSUPPORTED_RESOURCES:
+            print(f"  {filename}: {reason}")
+
+        if not args.commit:
+            print("\nPreflight passed. No OpenEMR records were created.")
+            print("Run the same command with --commit to execute the plan.")
+            return 0
+
+        return run_resources(
+            resources,
+            csv_dir,
+            quiet=args.quiet,
+            progress_every=args.progress_every,
+            skip_local_vitals_compat=args.skip_local_vitals_compat,
         )
-        existing_keys = {
-            duplicate_key(patient)
-            for patient in existing_patients
-        }
 
-        import_map = load_json(IMPORT_MAP_FILE, {})
-        created = 0
-        skipped = 0
-        failed = 0
-
-        for synthea_id, patient in mapped:
-            label = f"{patient['fname']} {patient['lname']}"
-
-            if synthea_id and synthea_id in import_map:
-                print(f"SKIP already imported: {label}")
-                skipped += 1
-                continue
-
-            if duplicate_key(patient) in existing_keys:
-                print(f"SKIP likely duplicate: {label}")
-                skipped += 1
-                continue
-
-            try:
-                created_patient = create_patient(
-                    openemr["api_base_url"],
-                    token,
-                    patient,
-                )
-            except RuntimeError as error:
-                print(f"FAILED {label}: {error}", file=sys.stderr)
-                failed += 1
-                continue
-
-            openemr_identifier = (
-                created_patient.get("uuid")
-                or created_patient.get("id")
-                or "created"
-            )
-
-            print(f"CREATED {label}: {openemr_identifier}")
-            created += 1
-            existing_keys.add(duplicate_key(patient))
-
-            if synthea_id:
-                import_map[synthea_id] = {
-                    "openemr_identifier": openemr_identifier,
-                    "name": label,
-                    "DOB": patient["DOB"],
-                }
-                save_json(IMPORT_MAP_FILE, import_map)
-
-        print()
-        print("Import summary")
-        print(f"  Created: {created}")
-        print(f"  Skipped: {skipped}")
-        print(f"  Failed: {failed}")
-        print("  Access token was not printed or saved.")
-
-        return 1 if failed else 0
-
-    except (
-        RuntimeError,
-        ValueError,
-        OSError,
-        csv.Error,
-        json.JSONDecodeError,
-        requests.RequestException,
-    ) as error:
-        print(f"Patient import failed: {error}", file=sys.stderr)
+    except (RuntimeError, OSError) as error:
+        print(f"OpenEMR import workflow failed: {error}", file=sys.stderr)
         return 1
 
 
