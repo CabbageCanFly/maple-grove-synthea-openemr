@@ -5,8 +5,8 @@ All commands below run from the repository root.
 ## 1. Clone the repository
 
 ```bash
-git clone <repository-url>
-cd maple-grove-synthea
+git clone https://github.com/CabbageCanFly/maple-grove-synthea-openemr.git
+cd maple-grove-synthea-openemr
 ```
 
 ## 2. Download the Synthea JAR
