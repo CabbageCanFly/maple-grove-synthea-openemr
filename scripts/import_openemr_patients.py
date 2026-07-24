@@ -109,6 +109,7 @@ def get_access_token(client: dict[str, Any]) -> str:
         data={
             "grant_type": "password",
             "client_id": client["client_id"],
+            "client_secret": client["client_secret"],
             "scope": client["scope"],
             "user_role": "users",
             "username": username,
