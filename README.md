@@ -1,6 +1,6 @@
 # Maple Grove Synthea and OpenEMR
 
-Generate synthetic Greater Toronto Area patient data with Synthea, then import
+Generate synthetic Greater Toronto Area (GTA) patient data with Synthea, then import
 supported clinical records into OpenEMR 8.
 
 > **Synthetic data only:** Never represent generated or imported records as real
@@ -64,6 +64,10 @@ brew install --cask temurin@17
 Java should report version 17.
 
 ### 2. Download the GTA Synthea JAR
+
+The latest JAR for this Synthea revision can be found in the same GitHub repository:
+
+[https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases](https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases)
 
 ```bash
 mkdir -p dist
