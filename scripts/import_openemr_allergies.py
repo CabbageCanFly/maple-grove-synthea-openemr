@@ -83,40 +83,74 @@ def read_allergies(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def reaction_parts(row: dict[str, str]) -> list[str]:
-    parts: list[str] = []
+REACTION_OPTION_BY_CODE = {
+    "402387002": "allergic_angioedema",
+    "39579001": "anaphylaxis",
+    "49727002": "cough",
+    "21626009": "cutaneous_hypersensitivity",
+    "62315008": "diarrhea",
+    "247472004": "hives",
+    "418290006": "itching",
+    "267101005": "nasal_discharge",
+    "422587007": "nausea",
+    "878820003": "rhinoconjunctivitis",
+    "267036007": "shortness_of_breath",
+    "271807003": "skin_eruption",
+    "76067001": "sneezing",
+    "300359004": "vomiting",
+    "56018004": "wheezing",
+}
+
+
+def primary_reaction(row: dict[str, str]) -> tuple[str, str]:
+    candidates: list[tuple[int, int, str, str]] = []
 
     for index in (1, 2):
-        description = clean(row.get(f"DESCRIPTION{index}"))
         code = clean(row.get(f"REACTION{index}"))
+        description = clean(row.get(f"DESCRIPTION{index}"))
         severity = clean(row.get(f"SEVERITY{index}")).lower()
 
-        if not description and not code:
+        if not code and not description:
             continue
 
-        label = description or f"Reaction code {code}"
-        if severity:
-            label += f" ({severity})"
-        parts.append(label)
+        if not code:
+            raise ValueError(
+                f"Reaction {index} has a description but no SNOMED code: "
+                f"{description}"
+            )
 
-    return parts
+        option_id = REACTION_OPTION_BY_CODE.get(code)
+        if option_id is None:
+            raise ValueError(
+                f"Unsupported Synthea reaction code {code}: {description}"
+            )
 
+        if severity and severity not in SEVERITY_RANK:
+            raise ValueError(
+                f"Unsupported reaction severity: {severity}"
+            )
 
-def overall_severity(row: dict[str, str]) -> str:
-    severities = [
-        clean(row.get("SEVERITY1")).lower(),
-        clean(row.get("SEVERITY2")).lower(),
-    ]
-    return max(
-        severities,
-        key=lambda value: SEVERITY_RANK.get(value, 0),
-        default="",
-    )
+        # Higher severity wins. Negating the index makes reaction 1 win ties.
+        candidates.append(
+            (
+                SEVERITY_RANK.get(severity, 0),
+                -index,
+                option_id,
+                severity or "unassigned",
+            )
+        )
+
+    if not candidates:
+        return "unassigned", "unassigned"
+
+    _, _, option_id, severity = max(candidates)
+    return option_id, severity
 
 
 def build_payload(row: dict[str, str]) -> dict[str, Any]:
     title = clean(row.get("DESCRIPTION"))
     start = clean(row.get("START"))
+    stop = clean(row.get("STOP"))
     code = clean(row.get("CODE"))
     system = clean(row.get("SYSTEM")) or "Unknown"
 
@@ -127,20 +161,21 @@ def build_payload(row: dict[str, str]) -> dict[str, Any]:
     if not code:
         raise ValueError("Allergy CODE is empty.")
 
+    reaction, severity = primary_reaction(row)
+
     payload: dict[str, Any] = {
         "title": title,
         "begdate": start,
-        # Preserve the source coding label exactly; this export says "Unknown".
-        "diagnosis": f"{system}:{code}",
+        "reaction": reaction,
+        "severity_al": severity,
     }
 
-    severity = overall_severity(row)
-    if severity:
-        payload["severity_al"] = severity
+    if stop:
+        payload["enddate"] = stop
 
-    reactions = reaction_parts(row)
-    if reactions:
-        payload["reaction"] = "; ".join(reactions)
+    # Do not pretend that "Unknown" is a real OpenEMR coding namespace.
+    if system.casefold() != "unknown":
+        payload["diagnosis"] = f"{system}:{code}"
 
     return payload
 
@@ -419,9 +454,9 @@ def main() -> int:
         )
         print()
         print(
-            "Note: OpenEMR receives title, start date, source code, overall "
-            "severity, and combined reactions. Synthea type, category, both "
-            "reaction codes, and the source encounter remain in the local map."
+            "Note: The payload uses one SNOMED-mapped primary reaction and "
+            "severity. Both source reactions, their codes, and their individual "
+            "severities remain preserved in the local map."
         )
 
         if not args.commit:
