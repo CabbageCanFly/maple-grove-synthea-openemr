@@ -133,6 +133,27 @@ def api_get_records(
         verify=False,
         timeout=30,
     )
+    # OpenEMR 7 may return HTTP 404 with an empty response when a
+    # patient has no encounters. Treat only that specific response as
+    # an empty encounter collection so creation can continue.
+    if (
+        response.status_code == 404
+        and path.startswith("patient/")
+        and path.endswith("/encounter")
+    ):
+        try:
+            body = response.json()
+        except requests.JSONDecodeError:
+            body = None
+
+        if (
+            isinstance(body, dict)
+            and not (body.get("validationErrors") or [])
+            and not (body.get("internalErrors") or [])
+            and body.get("data") in (None, [], {})
+        ):
+            return []
+
     return response_records(response, f"GET {path}")
 
 
