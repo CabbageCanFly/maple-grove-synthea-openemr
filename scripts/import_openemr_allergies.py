@@ -403,6 +403,27 @@ def main() -> int:
             ]
 
         if not selected_rows:
+            # A header-only CSV is valid when a small Synthea population has
+            # no allergy records. In the normal orchestrated --all workflow,
+            # treat this as a successful no-op so later resources can continue.
+            if args.all and not candidate_rows:
+                print(f"Allergies CSV: {args.allergies_csv.resolve()}")
+                print(f"Allergy rows available: {len(rows)}")
+                print("Allergies matching filters: 0")
+                print(f"Selection offset: {args.offset}")
+                print("Allergies selected: 0")
+                print(f"Mode: {'COMMIT' if args.commit else 'DRY RUN'}")
+                print()
+                print("No allergy records to import.")
+                print()
+                print("Allergy import summary")
+                print("  Created: 0")
+                print("  Skipped: 0")
+                print("  Failed: 0")
+                print("  Reaction fallbacks to unassigned: 0")
+                print("  Access token was not printed or saved.")
+                return 0
+
             raise RuntimeError("No allergy rows matched the selection.")
 
         for required_file, label in (

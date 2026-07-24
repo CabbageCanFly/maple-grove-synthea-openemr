@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import shlex
@@ -29,6 +30,71 @@ IMPORT_CONTEXT_FILE = ROOT / ".local/import-context.json"
 CLIENT_FILE = ROOT / ".local/openemr-client.json"
 PATIENT_MAP_FILE = ROOT / ".local/patient-import-map.json"
 ENCOUNTER_MAP_FILE = ROOT / ".local/encounter-import-map.json"
+
+
+CORE_REQUIRED_CSV_FILES = (
+    "patients.csv",
+    "organizations.csv",
+    "providers.csv",
+    "encounters.csv",
+)
+
+# Small Synthea populations can legitimately contain zero rows for these
+# resources, in which case Synthea may omit the CSV entirely.
+OPTIONAL_EMPTY_CSV_HEADERS: dict[str, tuple[str, ...]] = {
+    "conditions.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "ENCOUNTER",
+        "SYSTEM",
+        "CODE",
+        "DESCRIPTION",
+    ),
+    "allergies.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "ENCOUNTER",
+        "CODE",
+        "SYSTEM",
+        "DESCRIPTION",
+        "TYPE",
+        "CATEGORY",
+        "REACTION1",
+        "DESCRIPTION1",
+        "SEVERITY1",
+        "REACTION2",
+        "DESCRIPTION2",
+        "SEVERITY2",
+    ),
+    "medications.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "PAYER",
+        "ENCOUNTER",
+        "CODE",
+        "DESCRIPTION",
+        "BASE_COST",
+        "PAYER_COVERAGE",
+        "DISPENSES",
+        "TOTALCOST",
+        "REASONCODE",
+        "REASONDESCRIPTION",
+    ),
+    "observations.csv": (
+        "DATE",
+        "PATIENT",
+        "ENCOUNTER",
+        "CATEGORY",
+        "CODE",
+        "DESCRIPTION",
+        "VALUE",
+        "UNITS",
+        "TYPE",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -228,10 +294,25 @@ def required_dataset_filenames() -> tuple[str, ...]:
 
 
 def valid_csv_dir(path: Path) -> bool:
+    """Return whether a directory contains the core Synthea dataset files."""
+
     return path.is_dir() and all(
-        (path / filename).is_file()
-        for filename in required_dataset_filenames()
+        (path / filename).is_file() for filename in CORE_REQUIRED_CSV_FILES
     )
+
+
+def ensure_optional_empty_csvs(csv_dir: Path) -> list[str]:
+    """Create header-only CSVs for optional resources omitted by Synthea."""
+
+    created: list[str] = []
+    for filename, header in OPTIONAL_EMPTY_CSV_HEADERS.items():
+        path = csv_dir / filename
+        if path.is_file():
+            continue
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow(header)
+        created.append(filename)
+    return created
 
 
 def read_current_dataset() -> tuple[Path, dict[str, object]] | None:
@@ -282,7 +363,7 @@ def resolve_csv_dir(explicit: Path | None) -> tuple[Path, dict[str, object] | No
         if not valid_csv_dir(csv_dir):
             required = "\n".join(
                 f"  - {csv_dir / filename}"
-                for filename in required_dataset_filenames()
+                for filename in CORE_REQUIRED_CSV_FILES
                 if not (csv_dir / filename).is_file()
             )
             raise RuntimeError(
@@ -646,6 +727,7 @@ def main() -> int:
             return 0
 
         csv_dir, manifest, selection_source = resolve_csv_dir(args.csv_dir)
+        created_empty_csvs = ensure_optional_empty_csvs(csv_dir)
         resources = selected_resources(args.resource)
 
         if not resources:
@@ -682,6 +764,8 @@ def main() -> int:
         print("Maple Grove supported OpenEMR import")
         print(f"CSV directory: {csv_dir}")
         print(f"Dataset selection: {selection_source}")
+        for filename in created_empty_csvs:
+            print(f"Created empty optional CSV: {csv_dir / filename}")
         if manifest:
             print(
                 "Dataset fingerprint: "

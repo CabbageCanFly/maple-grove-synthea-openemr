@@ -22,16 +22,72 @@ DEFAULT_CONFIG = ROOT / "config/synthea-gta.properties"
 DEFAULT_OUTPUT_ROOT = ROOT / "output/runs"
 CURRENT_DATASET_FILE = ROOT / "output/current-dataset.json"
 RUN_MANIFEST_NAME = "dataset-manifest.json"
-REQUIRED_CSV_FILES = (
+CORE_REQUIRED_CSV_FILES = (
     "patients.csv",
     "organizations.csv",
     "providers.csv",
     "encounters.csv",
-    "conditions.csv",
-    "allergies.csv",
-    "medications.csv",
-    "observations.csv",
 )
+
+# Synthea may omit a resource CSV entirely when a small generated population
+# contains no rows for that resource. Create a header-only file so the dataset
+# remains valid and downstream importers can process it as zero records.
+OPTIONAL_EMPTY_CSV_HEADERS: dict[str, tuple[str, ...]] = {
+    "conditions.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "ENCOUNTER",
+        "SYSTEM",
+        "CODE",
+        "DESCRIPTION",
+    ),
+    "allergies.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "ENCOUNTER",
+        "CODE",
+        "SYSTEM",
+        "DESCRIPTION",
+        "TYPE",
+        "CATEGORY",
+        "REACTION1",
+        "DESCRIPTION1",
+        "SEVERITY1",
+        "REACTION2",
+        "DESCRIPTION2",
+        "SEVERITY2",
+    ),
+    "medications.csv": (
+        "START",
+        "STOP",
+        "PATIENT",
+        "PAYER",
+        "ENCOUNTER",
+        "CODE",
+        "DESCRIPTION",
+        "BASE_COST",
+        "PAYER_COVERAGE",
+        "DISPENSES",
+        "TOTALCOST",
+        "REASONCODE",
+        "REASONDESCRIPTION",
+    ),
+    "observations.csv": (
+        "DATE",
+        "PATIENT",
+        "ENCOUNTER",
+        "CATEGORY",
+        "CODE",
+        "DESCRIPTION",
+        "VALUE",
+        "UNITS",
+        "TYPE",
+    ),
+}
+
+REQUIRED_CSV_FILES = CORE_REQUIRED_CSV_FILES + tuple(OPTIONAL_EMPTY_CSV_HEADERS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -247,11 +303,32 @@ def count_csv_rows(path: Path) -> int:
         return sum(1 for _ in reader)
 
 
+def ensure_optional_empty_csvs(csv_dir: Path) -> list[str]:
+    """Create header-only CSVs for optional resources with zero generated rows."""
+
+    created: list[str] = []
+    for filename, header in OPTIONAL_EMPTY_CSV_HEADERS.items():
+        path = csv_dir / filename
+        if path.is_file():
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow(header)
+        created.append(filename)
+    return created
+
+
 def build_csv_inventory(csv_dir: Path) -> list[dict[str, Any]]:
-    missing = [name for name in REQUIRED_CSV_FILES if not (csv_dir / name).is_file()]
-    if missing:
-        rendered = "\n".join(f"  - {name}" for name in missing)
+    missing_core = [
+        name for name in CORE_REQUIRED_CSV_FILES if not (csv_dir / name).is_file()
+    ]
+    if missing_core:
+        rendered = "\n".join(f"  - {name}" for name in missing_core)
         raise RuntimeError(f"Synthea did not produce required CSV files:\n{rendered}")
+
+    created_empty = ensure_optional_empty_csvs(csv_dir)
+    for filename in created_empty:
+        print(f"  Created empty optional CSV: {filename}")
 
     entries: list[dict[str, Any]] = []
     for path in sorted(csv_dir.glob("*.csv")):
