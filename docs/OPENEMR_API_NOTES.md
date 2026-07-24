@@ -82,7 +82,7 @@ Runtime behavior takes precedence over assumptions based solely on Swagger examp
 
 Local OpenEMR 8.0.0.3 capability checks found:
 
-- procedures: Standard and FHIR `GET` only;
+- generic procedures: Standard and FHIR `GET` only; a separate patient surgery `POST` route exists but is not a complete Procedure-import API;
 - immunizations: Standard and FHIR `GET` only;
 - care plans: FHIR `GET` only;
 - devices: FHIR `GET` only;

@@ -733,7 +733,7 @@ cannot be created through the enabled OpenEMR 8.0.0.3 Standard REST or FHIR APIs
 
 | Resource | Source rows | Installed API capability | Decision |
 |---|---:|---|---|
-| Procedures | 14,309 | Standard and FHIR `GET` only | Audited; creation unsupported |
+| Procedures | 14,309 | Generic Procedure APIs are `GET` only; patient surgery `POST` exists | Generic import unsupported; optional curated surgery subset deferred |
 | Immunizations | 1,538 | Standard and FHIR `GET` only | Creation unsupported |
 | Care plans | 366 | FHIR `GET` only | Creation unsupported |
 | Devices | 510 | FHIR `GET` only | Creation unsupported |
@@ -762,6 +762,30 @@ The next development phase is final importer orchestration, student workflow
 simplification, and validation of the shared AWS OpenEMR 7 target.
 
 <!-- END UNSUPPORTED-CLINICAL-RESOURCES -->
+
+<!-- BEGIN DEFERRED-SURGERY-SUBSET -->
+
+### Optional surgery subset
+
+OpenEMR 8.0.0.3 exposes `POST /api/patient/{pid}/surgery`, even though its
+generic Standard and FHIR Procedure endpoints are read-only.
+
+A keyword review found 191 possible surgery records across 63 patients, but the
+set also included referrals, pre-surgery testing, dental procedures, device
+replacement, and other records requiring clinical and mapping decisions.
+An additional 89 invasive-procedure candidates included colonoscopies,
+catheterizations, biopsies, and contraceptive implants.
+
+The patient surgery endpoint is not treated as a substitute for the complete
+14,309-row Synthea procedure dataset. A future optional extension may use a
+reviewed SNOMED allowlist after confirming the request schema, historical-date
+support, source-code preservation, encounter linkage, UI representation, and
+safe rerun behavior.
+
+This optional extension is deferred and does not block the core student import
+workflow.
+
+<!-- END DEFERRED-SURGERY-SUBSET -->
 
 ## Wider Synthea CSV import order
 
