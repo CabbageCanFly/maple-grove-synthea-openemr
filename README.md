@@ -115,7 +115,7 @@ Start Docker Desktop and the local OpenEMR 8 containers.
 In OpenEMR, open:
 
 ```text
-Administration -> Config -> Connectors
+Admin -> Config -> Connectors
 ```
 
 Enable:
@@ -132,7 +132,7 @@ https://localhost:9300
 ```
 
 Create or reuse one facility. Also create at least one active, authorized
-provider assigned to that facility. Use a clearly synthetic unique NPI, such as:
+provider in `Admin -> Users` assigned to that facility. You MUST add a unique NPI; as a placeholder, use a clearly synthetic unique NPI, such as:
 
 ```text
 0000000001
@@ -149,7 +149,7 @@ python3 scripts/register_openemr_client.py
 In OpenEMR, open:
 
 ```text
-Administration -> System -> API Clients
+Admin -> System -> API Clients
 ```
 
 Enable the newest **Maple Grove Synthea Importer** client.
