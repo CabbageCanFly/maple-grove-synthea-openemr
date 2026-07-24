@@ -235,7 +235,7 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: conditions
+## Current development phase: allergies
 
 Encounter importing is complete. The next planned resource is `conditions.csv`.
 
@@ -407,9 +407,37 @@ The final student workflow must hide the resource-specific development commands
 behind a concise setup command and an orchestrated import command. It should offer
 a fast representative demo import by default and an explicit full-data option.
 
-Next planned resource: `conditions.csv`.
+Next planned resource: `allergies.csv`.
 
 <!-- END ENCOUNTER-IMPLEMENTATION-STATUS -->
+
+<!-- BEGIN CONDITION-IMPORT-MILESTONE -->
+
+## Condition importer status
+
+Completed on 2026-07-23.
+
+Source coverage:
+
+- total condition rows: 3,590
+- imported into OpenEMR Medical Problems: 1,160
+- disorders: 1,132
+- morphologic abnormalities: 21
+- manually reviewed untagged clinical problems: 7
+
+The remaining findings, situations, and person-context records are intentionally
+excluded from Medical Problems until a more appropriate mapping is selected.
+
+The importer supports dry runs, filtering, offsets, limits, progress reporting,
+duplicate protection, and resumable imports. Condition mappings are stored under
+`.local/condition-import-map.json`.
+
+The originating Synthea encounter is preserved in the local mapping, although the
+Standard medical-problem API does not create an encounter issue link.
+
+Next planned resource: `allergies.csv`.
+
+<!-- END CONDITION-IMPORT-MILESTONE -->
 
 ## Wider Synthea CSV import order
 
