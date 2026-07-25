@@ -539,6 +539,16 @@ def ensure_source_mappings(
     return organization_map, provider_map
 
 
+def openemr_external_id(synthea_encounter_id: str) -> str:
+    """Return a stable identifier that fits OpenEMR 7 external_id."""
+    digest = hashlib.sha256(
+        synthea_encounter_id.encode("utf-8")
+    ).hexdigest()
+
+    # "mg-" plus 18 hexadecimal characters = 21 characters.
+    return f"mg-{digest[:18]}"
+
+
 def build_payload(
     row: dict[str, str],
     organization_map: dict[str, Any],
@@ -563,7 +573,9 @@ def build_payload(
         "pc_catid": pc_catid,
         "class_code": class_code,
         "sensitivity": "normal",
-        "external_id": clean(row.get("Id")),
+        "external_id": openemr_external_id(
+            clean(row.get("Id"))
+        ),
     }
 
 
@@ -842,14 +854,22 @@ def main() -> int:
                     (
                         item
                         for item in existing
-                        if clean(str(item.get("external_id"))) == source_encounter_id
+                        if clean(str(item.get("external_id")))
+                        == openemr_external_id(source_encounter_id)
                     ),
                     None,
                 )
                 if matched is not None:
                     encounter_map[source_encounter_id] = {
-                        "openemr_encounter_id": matched.get("eid") or matched.get("id"),
-                        "openemr_encounter_uuid": matched.get("euuid") or matched.get("uuid"),
+                        "openemr_encounter_id": (
+                            matched.get("eid")
+                            or matched.get("id")
+                            or matched.get("encounter")
+                        ),
+                        "openemr_encounter_uuid": (
+                            matched.get("euuid")
+                            or matched.get("uuid")
+                        ),
                         "openemr_patient_uuid": patient_uuid,
                         "status": "discovered-existing",
                     }
@@ -881,13 +901,24 @@ def main() -> int:
             encounter_id = (
                 created_encounter.get("eid")
                 or created_encounter.get("id")
-                or "created"
+                or created_encounter.get("encounter")
             )
             encounter_uuid = (
                 created_encounter.get("euuid")
                 or created_encounter.get("uuid")
                 or ""
             )
+
+            if not str(encounter_id or "").isdigit():
+                print(
+                    f"FAILED {label}: OpenEMR created the encounter "
+                    "but did not return a numeric encounter ID. "
+                    f"Response: {json.dumps(created_encounter)}",
+                    file=sys.stderr,
+                )
+                failed += 1
+                print_progress()
+                continue
 
             encounter_map[source_encounter_id] = {
                 "openemr_encounter_id": encounter_id,
