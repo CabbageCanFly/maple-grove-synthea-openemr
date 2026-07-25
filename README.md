@@ -430,6 +430,28 @@ The normal workflow imports, in dependency order:
 
 Keep the terminal open until the command finishes.
 
+#### When you generate another dataset
+
+You do not need to delete `.local` or remember a special reset procedure. Run
+the normal preflight and import commands. The importer detects that the newly
+generated CSV files differ from the previous dataset.
+
+During the committed import, it asks:
+
+```text
+Start importing this new dataset? [y/N]:
+```
+
+Enter `y` to archive the previous dataset's local mapping files and continue.
+This does **not** delete records already stored in OpenEMR; it only starts fresh
+local tracking for the newly generated dataset.
+
+For automated or non-interactive use, the equivalent command is:
+
+```bash
+python3 scripts/import_openemr.py --start-new-dataset --commit
+```
+
 ### 15. Confirm duplicate protection
 
 Run the exact same import command again:

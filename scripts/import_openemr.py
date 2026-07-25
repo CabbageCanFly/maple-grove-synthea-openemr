@@ -546,6 +546,72 @@ def archive_import_state() -> Path | None:
     return archive_dir
 
 
+def choose_new_dataset_mode(
+    csv_dir: Path,
+    *,
+    commit: bool,
+    requested: bool,
+) -> bool:
+    """Detect a newly selected dataset and ask before changing local state."""
+
+    if requested:
+        return True
+
+    context = read_import_context()
+    if context is None:
+        return False
+
+    selected_fingerprint = dataset_fingerprint(csv_dir)
+    bound_fingerprint = str(
+        context.get("dataset_fingerprint") or ""
+    )
+
+    if selected_fingerprint == bound_fingerprint:
+        return False
+
+    bound_csv = str(
+        context.get("csv_directory") or "(unknown)"
+    )
+
+    print()
+    print("A different generated dataset is selected.")
+    print(f"  Previous dataset: {bound_csv}")
+    print(f"  New dataset: {csv_dir}")
+    print(
+        "The previous local import maps must be archived before "
+        "this new dataset can be imported."
+    )
+    print(
+        "This does not delete or change records already stored "
+        "inside OpenEMR."
+    )
+
+    if not commit:
+        print(
+            "Preflight will continue. When you rerun with --commit, "
+            "you will be asked to confirm the new dataset."
+        )
+        return True
+
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "A new generated dataset is selected. Rerun with "
+            "--start-new-dataset --commit to archive the previous "
+            "local maps and continue."
+        )
+
+    answer = input(
+        "Start importing this new dataset? [y/N]: "
+    ).strip().casefold()
+
+    if answer in {"y", "yes"}:
+        return True
+
+    raise RuntimeError(
+        "Import cancelled. The existing local import state was not changed."
+    )
+
+
 def prepare_new_dataset_state(
     csv_dir: Path,
     *,
@@ -639,8 +705,9 @@ def validate_import_context(
             raise RuntimeError(
                 "The selected dataset does not match the dataset bound to the "
                 f"existing .local import state. Bound CSV directory: "
-                f"{context.get('csv_directory') or '(unknown)'}. Archive or remove "
-                ".local import maps before importing a different generation."
+                f"{context.get('csv_directory') or '(unknown)'}. Rerun with "
+                "--start-new-dataset to archive the previous local maps and "
+                "use the newly selected generation."
             )
         if target and expected_target and expected_target != target:
             raise RuntimeError(
@@ -916,10 +983,16 @@ def main() -> int:
                 "scripts/register_openemr_client.py first."
             )
 
+        start_new_dataset = choose_new_dataset_mode(
+            csv_dir,
+            commit=args.commit,
+            requested=args.start_new_dataset,
+        )
+
         new_dataset_preflight = prepare_new_dataset_state(
             csv_dir,
             commit=args.commit,
-            enabled=args.start_new_dataset,
+            enabled=start_new_dataset,
         )
 
         if not new_dataset_preflight:
