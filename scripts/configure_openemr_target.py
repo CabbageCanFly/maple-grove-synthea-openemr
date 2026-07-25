@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Select the local or remote OpenEMR target used by project scripts."""
+"""Choose the OpenEMR installation used by the project scripts."""
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,6 +16,8 @@ import urllib3
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_FILE = ROOT / ".local" / "openemr-target.json"
 CLIENT_FILE = ROOT / ".local" / "openemr-client.json"
+
+DEFAULT_SITE = "default"
 
 
 def yes_no(prompt: str, *, default: bool = False) -> bool:
@@ -32,15 +33,23 @@ def yes_no(prompt: str, *, default: bool = False) -> bool:
 def normalize_base_url(value: str) -> str:
     value = value.strip().rstrip("/")
 
+    if not value:
+        raise RuntimeError("The OpenEMR address cannot be empty.")
+
     if "://" not in value:
         value = "https://" + value
 
     parsed = urlparse(value)
 
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"}:
         raise RuntimeError(
-            "Enter a complete server URL such as "
-            "https://mgfhc-demo.hopto.org or https://18.223.33.251."
+            "The address must start with http:// or https://."
+        )
+
+    if not parsed.netloc:
+        raise RuntimeError(
+            "Enter an address such as "
+            "https://mgfhc-demo.hopto.org."
         )
 
     if (
@@ -50,33 +59,83 @@ def normalize_base_url(value: str) -> str:
         or parsed.fragment
     ):
         raise RuntimeError(
-            "Enter only the OpenEMR server base URL, without a path."
+            "Enter only the main OpenEMR address, without "
+            "anything after the hostname or IP address."
         )
 
     return value
 
 
-def parse_version(value: str) -> tuple[str, int]:
-    value = value.strip()
-    match = re.fullmatch(r"(\d+)(?:\.\d+){0,3}", value)
+def detect_major_version(
+    discovery: dict[str, object],
+) -> int:
+    """Detect the OpenEMR API generation from advertised scopes."""
+    scopes_value = discovery.get("scopes_supported", [])
 
-    if not match:
-        raise RuntimeError(
-            "Enter a version such as 7, 7.0.2, or 8.0.0.3."
-        )
+    if not isinstance(scopes_value, list):
+        scopes_value = []
 
-    return value, int(match.group(1))
+    scopes = {
+        str(scope).strip()
+        for scope in scopes_value
+        if str(scope).strip()
+    }
+
+    # OpenEMR 8 uses compact permission scopes.
+    compact_scopes = {
+        "user/patient.crs",
+        "user/encounter.crs",
+        "user/facility.crs",
+    }
+
+    if scopes.intersection(compact_scopes):
+        return 8
+
+    # OpenEMR 7 uses separate read and write scopes.
+    legacy_patient_scopes = {
+        "user/patient.read",
+        "user/patient.write",
+    }
+
+    legacy_encounter_scopes = {
+        "user/encounter.read",
+        "user/encounter.write",
+    }
+
+    if (
+        legacy_patient_scopes.issubset(scopes)
+        or legacy_encounter_scopes.issubset(scopes)
+    ):
+        return 7
+
+    raise RuntimeError(
+        "The OpenEMR API was found, but its version could not "
+        "be detected automatically."
+    )
 
 
-def test_discovery(
+def load_discovery(
     base_url: str,
-    site: str,
-) -> tuple[bool, dict[str, object]]:
+) -> tuple[dict[str, object], bool]:
     discovery_url = (
-        f"{base_url}/oauth2/{site}/"
+        f"{base_url}/oauth2/{DEFAULT_SITE}/"
         ".well-known/openid-configuration"
     )
-    verify_tls = True
+
+    parsed = urlparse(base_url)
+
+    if parsed.scheme == "http":
+        print()
+        print("WARNING: This server uses unencrypted HTTP.")
+        print(
+            "Your OpenEMR username and password could be visible "
+            "to others on the network."
+        )
+
+        if not yes_no(
+            "Continue with this known test server?"
+        ):
+            raise RuntimeError("HTTP server was not accepted.")
 
     try:
         response = requests.get(
@@ -84,24 +143,28 @@ def test_discovery(
             verify=True,
             timeout=20,
         )
+        verify_tls = True
+
     except requests.exceptions.SSLError:
         print()
         print(
-            "The server responded, but its HTTPS certificate is not "
-            "trusted for this address."
+            "This server does not have a trusted HTTPS "
+            "certificate for the address you entered."
         )
         print(
-            "This is common when using the raw IP address of a test server."
+            "This is common for a temporary AWS server accessed "
+            "through its IP address."
         )
 
         if not yes_no(
-            "Allow insecure certificate mode for this server?"
+            "Continue with this known test server?"
         ):
             raise RuntimeError(
-                "Certificate verification was not accepted."
+                "The untrusted certificate was not accepted."
             )
 
         verify_tls = False
+
         urllib3.disable_warnings(
             urllib3.exceptions.InsecureRequestWarning
         )
@@ -116,22 +179,35 @@ def test_discovery(
 
     try:
         discovery = response.json()
-    except requests.JSONDecodeError as exc:
+    except ValueError as exc:
         raise RuntimeError(
-            "OAuth discovery did not return JSON. Check the server URL "
-            "and OpenEMR API settings."
+            "OpenEMR responded, but OAuth discovery did not "
+            "return valid JSON."
         ) from exc
 
-    if (
-        not discovery.get("registration_endpoint")
-        or not discovery.get("token_endpoint")
-    ):
+    if not isinstance(discovery, dict):
         raise RuntimeError(
-            "OAuth discovery did not return registration and token "
-            "endpoints."
+            "OpenEMR OAuth discovery returned an unexpected result."
         )
 
-    return verify_tls, discovery
+    required = (
+        "registration_endpoint",
+        "token_endpoint",
+    )
+
+    missing = [
+        name
+        for name in required
+        if not discovery.get(name)
+    ]
+
+    if missing:
+        raise RuntimeError(
+            "OpenEMR OAuth discovery is missing: "
+            + ", ".join(missing)
+        )
+
+    return discovery, verify_tls
 
 
 def save_target(target: dict[str, object]) -> None:
@@ -141,7 +217,12 @@ def save_target(target: dict[str, object]) -> None:
     )
 
     TARGET_FILE.write_text(
-        json.dumps(target, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            target,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -156,9 +237,17 @@ def configure_local() -> int:
         TARGET_FILE.unlink()
 
     print()
-    print("Local Docker OpenEMR selected")
-    print("  Docker detection will be used.")
-    print(f"  Remote target configuration removed: {TARGET_FILE}")
+    print("Local Docker OpenEMR selected.")
+    print("The project will find the local container automatically.")
+
+    if CLIENT_FILE.exists():
+        print()
+        print(
+            "A saved OAuth client already exists. If it belongs "
+            "to another server, remove it and register again:"
+        )
+        print("  rm -f .local/openemr-client.json")
+
     return 0
 
 
@@ -166,29 +255,24 @@ def configure_remote() -> int:
     print()
 
     base_url = normalize_base_url(
-        input("OpenEMR server URL: ")
+        input(
+            "OpenEMR address "
+            "(the address used in your browser): "
+        )
     )
 
-    site = (
-        input("OpenEMR site [default]: ").strip()
-        or "default"
-    )
+    print()
+    print("Connecting to OpenEMR...")
 
-    version, major_version = parse_version(
-        input("OpenEMR version, for example 7.0.2: ")
-    )
-
-    verify_tls, discovery = test_discovery(
-        base_url,
-        site,
-    )
+    discovery, verify_tls = load_discovery(base_url)
+    major_version = detect_major_version(discovery)
 
     target = {
         "target_mode": "remote",
         "base_url": base_url,
-        "site": site,
-        "version": version,
+        "site": DEFAULT_SITE,
         "major_version": major_version,
+        "version": f"{major_version} compatibility",
         "verify_tls": verify_tls,
         "issuer": discovery.get("issuer"),
         "registration_endpoint": discovery.get(
@@ -200,36 +284,48 @@ def configure_remote() -> int:
     save_target(target)
 
     print()
-    print("Remote OpenEMR target saved")
-    print(f"  Base URL: {base_url}")
-    print(f"  Site: {site}")
-    print(f"  OpenEMR version: {version}")
-    print(f"  Verify TLS certificate: {verify_tls}")
-    print(f"  Configuration: {TARGET_FILE}")
+    print("OpenEMR is ready.")
+    print(f"  Address: {base_url}")
+    print(
+        f"  Detected: OpenEMR {major_version} "
+        "API compatibility"
+    )
+
+    if verify_tls:
+        print("  Secure certificate: verified")
+    else:
+        print(
+            "  Secure certificate: verification disabled "
+            "for this test server"
+        )
+
+    print(f"  Saved configuration: {TARGET_FILE}")
 
     if CLIENT_FILE.exists():
         try:
             client = json.loads(
                 CLIENT_FILE.read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             client = {}
 
         if client.get("base_url") != base_url:
             print()
             print(
-                "An OAuth client for another OpenEMR server exists."
+                "Your saved OAuth client belongs to another "
+                "OpenEMR installation."
             )
-            print("Before registration, remove it with:")
+            print("Run:")
             print("  rm -f .local/openemr-client.json")
+            print("  python3 scripts/register_openemr_client.py")
 
     return 0
 
 
 def main() -> int:
-    print("Choose the OpenEMR target")
-    print("  1. Local Docker OpenEMR")
-    print("  2. Remote OpenEMR server")
+    print("Where is OpenEMR running?")
+    print("  1. On this computer using Docker")
+    print("  2. On another server, such as AWS")
 
     selection = input("Selection [1]: ").strip() or "1"
 
@@ -240,14 +336,14 @@ def main() -> int:
         if selection == "2":
             return configure_remote()
 
-        raise RuntimeError("Choose 1 or 2.")
+        raise RuntimeError("Enter 1 or 2.")
 
     except (
         RuntimeError,
         requests.RequestException,
     ) as error:
         print(
-            f"OpenEMR target configuration failed: {error}",
+            f"OpenEMR setup failed: {error}",
             file=sys.stderr,
         )
         return 1
