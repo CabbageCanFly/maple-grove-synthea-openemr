@@ -225,9 +225,44 @@ A temporary test server opened by raw IP may have an untrusted certificate. Only
 accept that warning when an instructor or project maintainer confirms that the
 server is a known test instance.
 
-### 9A. Prepare local Docker OpenEMR
+### 9. Confirm that OpenEMR is prepared
 
-Skip this section when using the shared AWS server.
+Before registering the importer, OpenEMR must have its API enabled and at least
+one eligible provider account for encounter attribution.
+
+> **You may skip provider setup only when you or your instructor/administrator
+> have already confirmed every item in the provider checklist below.** Merely
+> having a username that can log in to OpenEMR is not enough.
+
+#### Required provider checklist — local Docker and AWS
+
+At least one **non-admin provider** must:
+
+- be Active;
+- be Authorized;
+- be assigned to a facility; and
+- have a unique synthetic 10-digit value in the NPI field.
+
+Examples:
+
+```text
+0000000001
+0000000002
+0000000003
+```
+
+These are fictional compatibility placeholders. Never use a real provider's
+NPI. OpenEMR may hide a manually created provider from the Practitioner API until
+its NPI field is filled in. If no eligible provider is available, patient import
+may succeed but encounter import will stop.
+
+The provider account does not have to be the same account that the student uses
+to log in.
+
+#### If you are using local Docker
+
+Skip these local setup actions only if you already completed them for this exact
+local OpenEMR installation.
 
 Start Docker Desktop and your OpenEMR containers, then run:
 
@@ -263,47 +298,33 @@ Set the local OAuth site address to:
 https://localhost:9300
 ```
 
-#### Prepare at least one provider
-
-In OpenEMR, open:
+Then open:
 
 ```text
 Administration -> Users
 ```
 
-Create or edit at least one **non-admin provider** and make sure that:
+Create or edit at least one provider so it satisfies the required provider
+checklist above.
 
-- the account is Active;
-- the account is Authorized;
-- the provider is assigned to a facility; and
-- the NPI field contains a unique synthetic 10-digit placeholder.
+#### If you are using shared AWS OpenEMR
 
-Examples:
-
-```text
-0000000001
-0000000002
-0000000003
-```
-
-These are fictional compatibility placeholders. Never use a real provider's
-NPI. OpenEMR may hide a manually created provider from the Practitioner API until
-its NPI field is filled in.
-
-### 9B. Prepare shared AWS OpenEMR
-
-Skip this section when using local Docker.
-
-Your instructor or OpenEMR administrator should already have prepared:
+Your instructor or OpenEMR administrator will usually have already prepared:
 
 - the Standard REST API;
 - OAuth2 Password Grant;
 - at least one facility;
-- active, authorized provider accounts with synthetic NPIs; and
+- at least one provider satisfying the required provider checklist above; and
 - your assigned OpenEMR username and password.
 
-Students do not need to edit the AWS server, use Docker, or enter provider data
-unless specifically instructed.
+If your instructor or administrator confirms that this is already done, skip the
+server-setup work and continue to Step 10. Students do not need Docker, AWS
+Console, SSH, EC2 access, database access, or permission to edit provider
+accounts.
+
+If the importer later reports **no eligible provider pool**, ask the instructor
+or administrator to recheck the provider's Active, Authorized, facility, and NPI
+fields. After they save the correction, rerun the same import command.
 
 ### 10. Register the importer
 
