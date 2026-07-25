@@ -11,9 +11,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,14 +208,7 @@ def request_access_token(
     openemr = openemr or detect()
     username, password = get_credentials(openemr)
 
-    verify_tls = bool(
-        openemr.get("verify_tls", True)
-    )
-
-    if not verify_tls:
-        urllib3.disable_warnings(
-            urllib3.exceptions.InsecureRequestWarning
-        )
+    session = create_openemr_session(openemr)
 
     token_data = {
         "grant_type": "password",
@@ -231,10 +224,9 @@ def request_access_token(
     if client_secret:
         token_data["client_secret"] = client_secret
 
-    response = requests.post(
+    response = session.post(
         client["token_endpoint"],
         data=token_data,
-        verify=verify_tls,
         timeout=30,
     )
 

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
-import urllib3
 
 from detect_openemr import detect
 from openemr_auth import request_access_token
+from openemr_http import create_openemr_session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,17 +108,18 @@ def get_access_token(
     access_token, _ = request_access_token(client)
     return access_token
 
+
 def get_existing_patients(
+    session: requests.Session,
     api_base_url: str,
     token: str,
 ) -> list[dict[str, Any]]:
-    response = requests.get(
+    response = session.get(
         f"{api_base_url}/patient",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
-        verify=False,
         timeout=30,
     )
 
@@ -133,18 +134,18 @@ def get_existing_patients(
 
 
 def create_patient(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     patient: dict[str, str],
 ) -> dict[str, Any]:
-    response = requests.post(
+    response = session.post(
         f"{api_base_url}/patient",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
         json=patient,
-        verify=False,
         timeout=30,
     )
 
@@ -253,11 +254,9 @@ def main() -> int:
                 "register_openemr_client.py first."
             )
 
-        urllib3.disable_warnings(
-            urllib3.exceptions.InsecureRequestWarning
-        )
 
         openemr = detect()
+        session = create_openemr_session(openemr)
         client = load_json(CLIENT_FILE, {})
 
         if client.get("base_url") != openemr["base_url"]:
@@ -267,6 +266,7 @@ def main() -> int:
 
         token = get_access_token(client)
         existing_patients = get_existing_patients(
+            session,
             openemr["api_base_url"],
             token,
         )
@@ -295,6 +295,7 @@ def main() -> int:
 
             try:
                 created_patient = create_patient(
+                    session,
                     openemr["api_base_url"],
                     token,
                     patient,

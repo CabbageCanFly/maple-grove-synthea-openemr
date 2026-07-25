@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register and safely store a local Maple Grove OpenEMR OAuth client."""
+"""Register and safely store an OAuth client for the selected OpenEMR."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import sys
 from pathlib import Path
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +26,8 @@ def make_client_name() -> str:
         "%Y-%m-%d %H:%M %Z"
     )
     return f"{CLIENT_NAME_PREFIX} {timestamp}"
+
+
 def scopes_for_version(major_version: int) -> str:
     """Return equivalent minimum scopes for OpenEMR 7 or 8."""
 
@@ -36,7 +38,11 @@ def scopes_for_version(major_version: int) -> str:
             "user/encounter.crs "
             "user/facility.crs "
             "user/practitioner.rs "
-            "user/list.rs user/medical_problem.crs user/allergy.cruds user/medication.cruds user/vital.crus"
+            "user/list.rs "
+            "user/medical_problem.crs "
+            "user/allergy.cruds "
+            "user/medication.cruds "
+            "user/vital.crus"
         )
 
     if major_version == 7:
@@ -45,7 +51,11 @@ def scopes_for_version(major_version: int) -> str:
             "user/patient.read user/patient.write "
             "user/encounter.read user/encounter.write "
             "user/facility.read user/facility.write "
-            "user/practitioner.read user/medical_problem.read user/medical_problem.write user/allergy.read user/allergy.write user/medication.read user/medication.write user/vital.read user/vital.write "
+            "user/practitioner.read "
+            "user/medical_problem.read user/medical_problem.write "
+            "user/allergy.read user/allergy.write "
+            "user/medication.read user/medication.write "
+            "user/vital.read user/vital.write "
             "user/list.read"
         )
 
@@ -54,11 +64,12 @@ def scopes_for_version(major_version: int) -> str:
     )
 
 
-
 def main() -> int:
     try:
         openemr = detect()
+        session = create_openemr_session(openemr)
         base_url = openemr["base_url"]
+        site = str(openemr.get("site") or "default")
         major_version = openemr.get("major_version")
 
         if not isinstance(major_version, int):
@@ -71,7 +82,8 @@ def main() -> int:
 
         if openemr["scheme"] != "https":
             raise RuntimeError(
-                "Local HTTPS is not ready. Run ensure_local_https.py first."
+                "OpenEMR must use HTTPS. For local Docker, run "
+                "ensure_local_https.py first."
             )
 
         if CLIENT_FILE.exists():
@@ -89,16 +101,13 @@ def main() -> int:
             print(f"  Credentials: {CLIENT_FILE}")
             return 0
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
         discovery_url = (
-            f"{base_url}/oauth2/default/"
+            f"{base_url}/oauth2/{site}/"
             ".well-known/openid-configuration"
         )
 
-        discovery_response = requests.get(
+        discovery_response = session.get(
             discovery_url,
-            verify=False,
             timeout=20,
         )
         discovery_response.raise_for_status()
@@ -122,10 +131,9 @@ def main() -> int:
             "scope": scopes,
         }
 
-        response = requests.post(
+        response = session.post(
             registration_endpoint,
             json=registration,
-            verify=False,
             timeout=30,
         )
 

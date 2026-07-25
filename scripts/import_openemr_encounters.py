@@ -20,9 +20,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
 
 
@@ -118,19 +118,19 @@ def response_records(response: requests.Response, label: str) -> list[dict[str, 
 
 
 def api_get_records(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     path: str,
     params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    response = requests.get(
+    response = session.get(
         f"{api_base_url}/{path}",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
         params=params,
-        verify=False,
         timeout=30,
     )
     # OpenEMR 7 may return HTTP 404 with an empty response when a
@@ -158,19 +158,19 @@ def api_get_records(
 
 
 def api_post_record(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     path: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    response = requests.post(
+    response = session.post(
         f"{api_base_url}/{path}",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
         json=payload,
-        verify=False,
         timeout=30,
     )
     records = response_records(response, f"POST {path}")
@@ -312,6 +312,7 @@ def provider_setup_help(
 
 
 def get_target_resources(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     facility_id: int | None,
@@ -322,12 +323,14 @@ def get_target_resources(
     """Select a safe facility and provider pool from the target OpenEMR."""
 
     facilities = api_get_records(
+        session,
         api_base_url,
         token,
         "facility",
         {"_count": 1000, "_offset": 0},
     )
     practitioners = api_get_records(
+        session,
         api_base_url,
         token,
         "practitioner",
@@ -738,8 +741,8 @@ def main() -> int:
                 "OpenEMR mapping. First missing ID: " + missing_patients[0]
             )
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         openemr = detect()
+        session = create_openemr_session(openemr)
         client = load_json(CLIENT_FILE, {})
         if client.get("base_url") != openemr["base_url"]:
             raise RuntimeError(
@@ -748,6 +751,7 @@ def main() -> int:
 
         token = get_access_token(client)
         facility, provider_pool, facility_selection = get_target_resources(
+            session,
             openemr["api_base_url"],
             token,
             args.facility_id,
@@ -878,6 +882,7 @@ def main() -> int:
             try:
                 if patient_uuid not in existing_encounters_by_patient:
                     existing_encounters_by_patient[patient_uuid] = api_get_records(
+                        session,
                         openemr["api_base_url"],
                         token,
                         f"patient/{patient_uuid}/encounter",
@@ -921,6 +926,7 @@ def main() -> int:
                     args.timezone,
                 )
                 created_encounter = api_post_record(
+                    session,
                     openemr["api_base_url"],
                     token,
                     f"patient/{patient_uuid}/encounter",

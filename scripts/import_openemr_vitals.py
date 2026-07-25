@@ -16,9 +16,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
 
 
@@ -424,7 +424,6 @@ def api_get_records(
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
-        verify=False,
         timeout=30,
     )
 
@@ -563,7 +562,6 @@ def update_vital(
                 "Content-Type": "application/json",
             },
             json=payload,
-            verify=False,
             timeout=30,
         )
     except requests.Timeout as exc:
@@ -654,7 +652,6 @@ def create_vital(
                 "Content-Type": "application/json",
             },
             json=payload,
-            verify=False,
             timeout=30,
         )
     except requests.Timeout as exc:
@@ -1094,9 +1091,6 @@ def main() -> int:
                 f"Missing OAuth client credentials: {CLIENT_FILE}"
             )
 
-        urllib3.disable_warnings(
-            urllib3.exceptions.InsecureRequestWarning
-        )
         openemr = detect()
         client = load_json(CLIENT_FILE, {})
 
@@ -1113,7 +1107,7 @@ def main() -> int:
             )
 
         token = get_access_token(client)
-        session = requests.Session()
+        session = create_openemr_session(openemr)
         vital_map = existing_vital_map
         pid_cache: dict[str, int] = {}
 

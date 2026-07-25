@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
 
 
@@ -217,7 +217,6 @@ def api_get_records(
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
-        verify=False,
         timeout=30,
     )
     return response_records(response, f"GET {path}")
@@ -274,7 +273,6 @@ def create_medication(
             "Content-Type": "application/json",
         },
         json=payload,
-        verify=False,
         timeout=30,
     )
 
@@ -503,7 +501,6 @@ def main() -> int:
             print("Review the payload, then rerun with --commit.")
             return 0
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         openemr = detect()
         client = load_json(CLIENT_FILE, {})
         if client.get("base_url") != openemr["base_url"]:
@@ -512,7 +509,7 @@ def main() -> int:
             )
 
         token = get_access_token(client)
-        session = requests.Session()
+        session = create_openemr_session(openemr)
         medication_map = load_json(MEDICATION_MAP_FILE, {})
         pid_cache: dict[str, int] = {}
 

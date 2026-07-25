@@ -125,6 +125,7 @@ fi
 export OPENEMR_USERNAME="$_openemr_username"
 export OPENEMR_PASSWORD="$_openemr_password"
 
+OPENEMR_SESSION_REPO_ROOT="$_openemr_repo_root" \
 OPENEMR_SESSION_BASE_URL="$_openemr_base_url" \
 OPENEMR_SESSION_USERNAME="$_openemr_username" \
 python3 - <<'PY'
@@ -132,7 +133,7 @@ import json
 import os
 from pathlib import Path
 
-root = Path.cwd()
+root = Path(os.environ["OPENEMR_SESSION_REPO_ROOT"])
 path = root / ".local" / "openemr-login.json"
 
 path.parent.mkdir(parents=True, exist_ok=True)

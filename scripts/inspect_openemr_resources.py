@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_auth import request_access_token
+from openemr_http import create_openemr_session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,25 +23,14 @@ def main() -> int:
         client = json.loads(CLIENT_FILE.read_text(encoding="utf-8"))
         openemr = detect()
 
-        urllib3.disable_warnings(
-            urllib3.exceptions.InsecureRequestWarning
-        )
+        if client.get("base_url") != openemr["base_url"]:
+            raise RuntimeError(
+                "The saved OAuth client belongs to a different "
+                "OpenEMR server."
+            )
 
-        token_response = requests.post(
-            client["token_endpoint"],
-            data={
-                "grant_type": "password",
-                "client_id": client["client_id"],
-                "scope": client["scope"],
-                "user_role": "users",
-                "username": os.getenv("OPENEMR_USERNAME", "admin"),
-                "password": os.getenv("OPENEMR_PASSWORD", "pass"),
-            },
-            verify=False,
-            timeout=30,
-        )
-        token_response.raise_for_status()
-        token = token_response.json()["access_token"]
+        token, _ = request_access_token(client, openemr)
+        session = create_openemr_session(openemr)
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -49,11 +38,10 @@ def main() -> int:
         }
 
         for resource in ("facility", "practitioner"):
-            response = requests.get(
+            response = session.get(
                 f"{openemr['api_base_url']}/{resource}",
                 headers=headers,
                 params={"_count": 100, "_offset": 0},
-                verify=False,
                 timeout=30,
             )
             response.raise_for_status()
@@ -97,6 +85,7 @@ def main() -> int:
         return 0
 
     except (
+        RuntimeError,
         OSError,
         KeyError,
         json.JSONDecodeError,

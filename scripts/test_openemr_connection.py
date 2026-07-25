@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 import requests
-import urllib3
 
 from detect_openemr import detect
 from openemr_auth import request_access_token
+from openemr_http import create_openemr_session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,22 +58,14 @@ def main() -> int:
             openemr,
         )
 
-        verify_tls = bool(
-            openemr.get("verify_tls", True)
-        )
+        session = create_openemr_session(openemr)
 
-        if not verify_tls:
-            urllib3.disable_warnings(
-                urllib3.exceptions.InsecureRequestWarning
-            )
-
-        response = requests.get(
+        response = session.get(
             f"{openemr['api_base_url']}/patient",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
             },
-            verify=verify_tls,
             timeout=30,
         )
 
