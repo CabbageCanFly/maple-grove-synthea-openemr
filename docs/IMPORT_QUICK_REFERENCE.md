@@ -1,64 +1,70 @@
-# OpenEMR Import Quick Reference
+# OpenEMR import quick reference
 
-Run all commands from the repository root.
+This page is for students or maintainers who already completed the full
+[`README.md`](../README.md) setup.
 
-## 1. Prepare Python
+Run commands from the repository root.
+
+## Start a terminal session
 
 ```bash
-python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements_openemr_import.txt
+source scripts/openemr_session.sh
+python3 scripts/test_openemr_connection.py
 ```
 
-Confirm the repository root:
+If the password is wrong, rerun:
 
 ```bash
-test -f README.md && test -d scripts && echo "Project folder detected."
+source scripts/openemr_session.sh
 ```
 
-## 2. Generate or select a dataset
-
-Generate a fresh 100-patient GTA dataset:
+## Generate a dataset
 
 ```bash
 python3 scripts/generate_gta_patients.py --population 100
 ```
 
-The generator writes a unique run below `output/runs/` and updates:
+The generator creates a unique run under `output/runs/` and selects it in:
 
 ```text
 output/current-dataset.json
 ```
 
-To use an existing dataset explicitly, add this to an orchestrator command:
+## Select local Docker or AWS OpenEMR
 
 ```bash
---csv-dir output/gta-100-v2/csv
+python3 scripts/configure_openemr_target.py
 ```
 
-## 3. Prepare the OpenEMR connection
+For local Docker only:
 
 ```bash
-python3 scripts/detect_openemr.py
 python3 scripts/ensure_local_https.py
+```
+
+Register a client on the selected OpenEMR target:
+
+```bash
 python3 scripts/register_openemr_client.py
 ```
 
-Enable the newest client in:
+Enable the newest timestamped client in:
 
 ```text
 Administration -> System -> API Clients
 ```
 
-Then test it:
+Then log in and test:
 
 ```bash
+source scripts/openemr_session.sh
 python3 scripts/test_openemr_connection.py
 ```
 
-## 4. Run the supported workflow
+## Run the complete workflow
 
-Preflight only:
+Preflight without creating records:
 
 ```bash
 python3 scripts/import_openemr.py
@@ -82,16 +88,9 @@ Supported dependency order:
 5. medications;
 6. supported vital signs.
 
-For legacy development maps created before dataset/target binding, verify the
-selected dataset and OpenEMR target, then adopt them once:
+Rerun the same command to verify that tracked records are skipped.
 
-```bash
-python3 scripts/import_openemr.py \
-  --csv-dir output/gta-100-v2/csv \
-  --adopt-existing-state
-```
-
-## 5. Run selected resources
+## Run selected resources
 
 ```bash
 python3 scripts/import_openemr.py \
@@ -100,16 +99,62 @@ python3 scripts/import_openemr.py \
   --commit
 ```
 
-## 6. Resource-specific developer commands
+## Inspect target resources
 
-These are for pilots and focused validation. The orchestrator is preferred for
-a normal complete run.
+```bash
+python3 scripts/inspect_openemr_resources.py
+```
+
+This is useful when diagnosing facilities, providers, authorization, or NPI
+setup.
+
+## Use an existing CSV directory
+
+```bash
+python3 scripts/import_openemr.py \
+  --csv-dir output/example-run/csv
+```
+
+If multiple datasets exist and none is selected, the orchestrator stops instead
+of guessing.
+
+## Start a deliberately new dataset mapping state
+
+Use the orchestrator's supported state-management option rather than manually
+mixing maps from different datasets:
+
+```bash
+python3 scripts/import_openemr.py \
+  --start-new-dataset \
+  --commit \
+  --quiet \
+  --progress-every 100
+```
+
+Review the preflight behavior before using this with an important target.
+
+## Complete local reset
+
+Only for a clean test or when instructed. This removes the selected target,
+OAuth client details, username memory, and local import maps:
+
+```bash
+openemr_logout 2>/dev/null || true; rm -rf .local
+python3 scripts/configure_openemr_target.py
+```
+
+It does not delete records already in OpenEMR. Do not clear maps and then assume
+that every existing record can still be safely identified as imported.
+
+## Resource-specific developer commands
+
+These are for focused validation. The orchestrator is preferred for normal use.
 
 ### Patients
 
 ```bash
 python3 scripts/import_openemr_patients.py \
-  --patients-csv output/gta-100-v2/csv/patients.csv \
+  --patients-csv output/example-run/csv/patients.csv \
   --limit 1
 ```
 
@@ -117,9 +162,9 @@ python3 scripts/import_openemr_patients.py \
 
 ```bash
 python3 -u scripts/import_openemr_encounters.py \
-  --encounters-csv output/gta-100-v2/csv/encounters.csv \
-  --organizations-csv output/gta-100-v2/csv/organizations.csv \
-  --providers-csv output/gta-100-v2/csv/providers.csv \
+  --encounters-csv output/example-run/csv/encounters.csv \
+  --organizations-csv output/example-run/csv/organizations.csv \
+  --providers-csv output/example-run/csv/providers.csv \
   --all \
   --commit \
   --progress-every 250
@@ -129,10 +174,7 @@ python3 -u scripts/import_openemr_encounters.py \
 
 ```bash
 python3 -u scripts/import_openemr_conditions.py \
-  --conditions-csv output/gta-100-v2/csv/conditions.csv \
-  --semantic-tag disorder \
-  --semantic-tag "morphologic abnormality" \
-  --semantic-tag untagged \
+  --conditions-csv output/example-run/csv/conditions.csv \
   --all \
   --commit \
   --quiet \
@@ -143,7 +185,7 @@ python3 -u scripts/import_openemr_conditions.py \
 
 ```bash
 python3 -u scripts/import_openemr_allergies.py \
-  --allergies-csv output/gta-100-v2/csv/allergies.csv \
+  --allergies-csv output/example-run/csv/allergies.csv \
   --all \
   --commit \
   --quiet \
@@ -154,7 +196,7 @@ python3 -u scripts/import_openemr_allergies.py \
 
 ```bash
 python3 -u scripts/import_openemr_medications.py \
-  --medications-csv output/gta-100-v2/csv/medications.csv \
+  --medications-csv output/example-run/csv/medications.csv \
   --all \
   --commit \
   --quiet \
@@ -165,7 +207,7 @@ python3 -u scripts/import_openemr_medications.py \
 
 ```bash
 python3 -u scripts/import_openemr_vitals.py \
-  --observations-csv output/gta-100-v2/csv/observations.csv \
+  --observations-csv output/example-run/csv/observations.csv \
   --all \
   --commit \
   --quiet \
@@ -176,8 +218,7 @@ python3 -u scripts/import_openemr_vitals.py \
 
 - Without `--commit`, the orchestrator performs preflight only.
 - Re-running the same selected dataset should skip tracked records.
-- `output/current-dataset.json` selects the normal default dataset.
-- `.local/import-context.json` binds maps to one dataset and OpenEMR target.
-- Do not reuse `.local` maps for a different generation or OpenEMR installation.
+- `.local/import-context.json` binds import maps to one dataset and target.
+- Do not reuse `.local` maps with a different OpenEMR installation.
 - Never commit `.local/`, generated `output/`, secrets, or access tokens.
-- Use `--help` to inspect current options.
+- Use `python3 scripts/import_openemr.py --help` for current options.

@@ -8,7 +8,13 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+
+ROOT = Path(__file__).resolve().parents[1]
+TARGET_FILE = ROOT / ".local" / "openemr-target.json"
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -209,7 +215,91 @@ def make_base_url(scheme: str, port: int) -> str:
     return f"{scheme}://localhost:{port}"
 
 
+
+def configured_target() -> dict[str, Any] | None:
+    """Return a configured remote target, or None for local Docker."""
+    if not TARGET_FILE.is_file():
+        return None
+
+    try:
+        target = json.loads(
+            TARGET_FILE.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "Could not read OpenEMR target configuration: "
+            f"{TARGET_FILE}"
+        ) from exc
+
+    if target.get("target_mode") != "remote":
+        return None
+
+    base_url = str(
+        target.get("base_url") or ""
+    ).strip().rstrip("/")
+
+    site = (
+        str(target.get("site") or "default").strip()
+        or "default"
+    )
+
+    version = str(
+        target.get("version") or "unknown"
+    ).strip()
+
+    major_version = target.get("major_version")
+    parsed = urlparse(base_url)
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+    ):
+        raise RuntimeError(
+            f"Invalid remote OpenEMR URL in {TARGET_FILE}: "
+            f"{base_url!r}"
+        )
+
+    if not isinstance(major_version, int):
+        match = re.match(r"(\d+)", version)
+        major_version = (
+            int(match.group(1))
+            if match
+            else None
+        )
+
+    default_port = (
+        443 if parsed.scheme == "https" else 80
+    )
+
+    return {
+        "openemr_container": None,
+        "database_container": None,
+        "image": "remote server",
+        "version": version,
+        "major_version": major_version,
+        "version_source": str(TARGET_FILE),
+        "version_file": None,
+        "status": "configured",
+        "scheme": parsed.scheme,
+        "host_port": parsed.port or default_port,
+        "base_url": base_url,
+        "site": site,
+        "api_base_url": (
+            f"{base_url}/apis/{site}/api"
+        ),
+        "verify_tls": bool(
+            target.get("verify_tls", True)
+        ),
+        "target_mode": "remote",
+    }
+
+
 def detect() -> dict[str, Any]:
+    configured = configured_target()
+
+    if configured is not None:
+        return configured
+
     openemr, database = find_containers(running_containers())
 
     container_name = openemr["Names"]
@@ -253,6 +343,8 @@ def detect() -> dict[str, Any]:
         "base_url": base_url,
         "site": "default",
         "api_base_url": f"{base_url}/apis/default/api",
+        "verify_tls": False,
+        "target_mode": "local",
     }
 
 
@@ -269,6 +361,27 @@ def main() -> int:
 
     if args.json:
         print(json.dumps(information, indent=2))
+        return 0
+
+
+    if information.get("target_mode") == "remote":
+        print("Remote OpenEMR configured")
+        print(
+            f"  OpenEMR version: "
+            f"{information['version']}"
+        )
+        print(
+            f"  Base URL: "
+            f"{information['base_url']}"
+        )
+        print(
+            f"  Standard API: "
+            f"{information['api_base_url']}"
+        )
+        print(
+            "  Verify TLS certificate: "
+            f"{information['verify_tls']}"
+        )
         return 0
 
     print("Local OpenEMR detected")

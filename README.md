@@ -1,44 +1,86 @@
 # Maple Grove Synthea and OpenEMR
 
-Generate synthetic Greater Toronto Area (GTA) patient data with Synthea, then import
-supported clinical records into OpenEMR 8.
+Generate **synthetic Greater Toronto Area patient records** with Synthea, then
+import the supported records into either:
+
+- a local OpenEMR 8 installation running in Docker; or
+- a shared/remote OpenEMR 7 server, such as the class AWS server.
 
 > **Synthetic data only:** Never represent generated or imported records as real
 > patient information.
 
-## Student quick start
+## Student walkthrough
 
-Run every command below from the repository root in the macOS Terminal or [WSL on Windows](https://learn.microsoft.com/en-us/windows/wsl/install).
+Follow the numbered steps in order. Run every command from the project folder
+(the folder that contains this `README.md` and the `scripts/` directory).
 
+### 1. Choose your OpenEMR setup
 
-### 0.1 Windows (WSL)
+Before starting, know which setup you are using:
 
-Open the desired folder you want to store the project in File Explorer, click the address bar, type:
+#### Option A — Local Docker
+
+Use this when OpenEMR is running on your own computer through Docker Desktop.
+You will need:
+
+- Docker Desktop;
+- permission to configure your local OpenEMR installation; and
+- a local OpenEMR username and password.
+
+#### Option B — Shared AWS server
+
+Use this when an instructor gives you an OpenEMR website address and an assigned
+username/password.
+
+You **do not** need Docker, AWS Console, SSH, EC2 access, database access, or an
+OpenEMR version number for this option.
+
+### 2. Open a terminal in the folder where you want the project
+
+#### Windows using WSL
+
+In File Explorer, open the folder where you want to store the project. Click the
+address bar, type:
 
 ```text
 wsl
 ```
 
-and press **Enter**. WSL will open directly in that folder.
+Press **Enter**. A WSL terminal should open in that folder.
 
-### 0.2 macOS
+#### macOS
 
-Open Terminal, type `cd ` (including the trailing space), then drag the desired folder into the Terminal window and press **Enter**.
+Open Terminal. Type `cd ` with a space after it, drag the desired folder into
+the Terminal window, then press **Enter**.
 
-### 1. Get the project and check prerequisites
+### 3. Download the project
 
-Clone the repository or download it through GitHub Desktop:
+Run:
 
 ```bash
 git clone https://github.com/CabbageCanFly/maple-grove-synthea-openemr.git
 cd maple-grove-synthea-openemr
 ```
 
-Required:
+Confirm that you are in the correct folder:
 
-- Python 3.10 or newer
-- Java 17
-- Docker Desktop with a local OpenEMR 8 environment
+```bash
+test -f README.md && test -d scripts && echo "Project folder detected."
+```
+
+Expected result:
+
+```text
+Project folder detected.
+```
+
+### 4. Install/check Python and Java
+
+This project requires:
+
+- Python 3.10 or newer;
+- Java 17; and
+- Docker Desktop only when using local OpenEMR.
 
 Check Python and Java:
 
@@ -47,27 +89,30 @@ python3 --version
 java -version
 ```
 
-For Windows, run the project through WSL. Install missing prerequisites with:
+#### Windows/WSL installation
+
+If Python or Java is missing:
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip openjdk-17-jdk
 ```
 
-For macOS with Homebrew:
+#### macOS installation with Homebrew
 
 ```bash
 brew install python
 brew install --cask temurin@17
 ```
 
-Java should report version 17.
+Run the version checks again. Java should report version 17.
 
-### 2. Download the GTA Synthea JAR
+### 5. Download the GTA Synthea JAR
 
-The latest JAR for this Synthea revision can be found in the same GitHub repository:
+The large Synthea JAR is distributed through GitHub Releases rather than stored
+inside the Git repository.
 
-[https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases](https://github.com/CabbageCanFly/maple-grove-synthea-openemr/releases)
+Run:
 
 ```bash
 mkdir -p dist
@@ -77,13 +122,17 @@ curl -L \
   -o dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-Verify the file exists:
+Confirm that it downloaded:
 
 ```bash
 ls -lh dist/synthea-gta-maple-grove-v0.1.1.jar
 ```
 
-### 3. Prepare Python
+Do not commit the JAR to Git.
+
+### 6. Prepare Python
+
+Create a project-only Python environment:
 
 ```bash
 python3 -m venv .venv
@@ -91,13 +140,17 @@ source .venv/bin/activate
 python3 -m pip install -r requirements_openemr_import.txt
 ```
 
-When returning to the project later, reactivate the environment with:
+Your terminal should now show `(.venv)` near the prompt.
+
+Whenever you open a new terminal later, return to the project folder and run:
 
 ```bash
 source .venv/bin/activate
 ```
 
-### 4. Generate a small test dataset
+### 7. Generate a small test dataset
+
+Start with a small dataset so mistakes are quick to correct:
 
 ```bash
 python3 scripts/generate_gta_patients.py \
@@ -105,17 +158,95 @@ python3 scripts/generate_gta_patients.py \
   --min-allergies 10
 ```
 
-Each generation is stored in a unique directory under `output/runs/`. The
-selected dataset is recorded in `output/current-dataset.json` automatically.
+The generated CSV files are saved in a new directory below:
 
-### 5. Prepare OpenEMR
+```text
+output/runs/
+```
 
-Start Docker Desktop and the local OpenEMR 8 containers.
+The newest generated dataset is selected automatically in:
+
+```text
+output/current-dataset.json
+```
+
+You normally do not need to open or edit that file.
+
+### 8. Select the OpenEMR target
+
+Run:
+
+```bash
+python3 scripts/configure_openemr_target.py
+```
+
+You will see:
+
+```text
+Where is OpenEMR running?
+  1. On this computer using Docker
+  2. On another server, such as AWS
+```
+
+#### For local Docker
+
+Choose:
+
+```text
+1
+```
+
+The project will detect the local OpenEMR container automatically.
+
+#### For AWS/shared OpenEMR
+
+Choose:
+
+```text
+2
+```
+
+When asked for the OpenEMR address, paste the main address you use in your
+browser, for example:
+
+```text
+https://example-openemr.school.ca
+```
+
+Enter only the main address. Do not add `/interface`, `/apis`, `/oauth2`, or any
+other path.
+
+The script automatically uses the normal OpenEMR site named `default` and
+automatically detects OpenEMR 7 versus OpenEMR 8. You do not need to know either
+of those details.
+
+A temporary test server opened by raw IP may have an untrusted certificate. Only
+accept that warning when an instructor or project maintainer confirms that the
+server is a known test instance.
+
+### 9A. Prepare local Docker OpenEMR
+
+Skip this section when using the shared AWS server.
+
+Start Docker Desktop and your OpenEMR containers, then run:
+
+```bash
+python3 scripts/ensure_local_https.py
+```
+
+The normal project address is:
+
+```text
+https://localhost:9300
+```
+
+Your browser may warn about the local development certificate. That is expected
+for this local synthetic-data environment.
 
 In OpenEMR, open:
 
 ```text
-Admin -> Config -> Connectors
+Administration -> Config -> Connectors
 ```
 
 Enable:
@@ -125,52 +256,161 @@ Standard REST API
 OAuth2 Password Grant
 ```
 
-For the standard local project setup, set the OAuth site address to:
+Set the local OAuth site address to:
 
 ```text
 https://localhost:9300
 ```
 
-Create or reuse one facility. Also create at least one active, authorized
-provider in `Admin -> Users` assigned to that facility. You MUST add a unique NPI; as a placeholder, use a clearly synthetic unique NPI, such as:
-
-```text
-0000000001
-```
-
-### 6. Detect OpenEMR and register the importer
-
-```bash
-python3 scripts/detect_openemr.py
-python3 scripts/ensure_local_https.py
-python3 scripts/register_openemr_client.py
-```
+#### Prepare at least one provider
 
 In OpenEMR, open:
 
 ```text
-Admin -> System -> API Clients
+Administration -> Users
 ```
 
-Enable the newest **Maple Grove Synthea Importer** client.
+Create or edit at least one **non-admin provider** and make sure that:
 
-Test the connection:
+- the account is Active;
+- the account is Authorized;
+- the provider is assigned to a facility; and
+- the NPI field contains a unique synthetic 10-digit placeholder.
+
+Examples:
+
+```text
+0000000001
+0000000002
+0000000003
+```
+
+These are fictional compatibility placeholders. Never use a real provider's
+NPI. OpenEMR may hide a manually created provider from the Practitioner API until
+its NPI field is filled in.
+
+### 9B. Prepare shared AWS OpenEMR
+
+Skip this section when using local Docker.
+
+Your instructor or OpenEMR administrator should already have prepared:
+
+- the Standard REST API;
+- OAuth2 Password Grant;
+- at least one facility;
+- active, authorized provider accounts with synthetic NPIs; and
+- your assigned OpenEMR username and password.
+
+Students do not need to edit the AWS server, use Docker, or enter provider data
+unless specifically instructed.
+
+### 10. Register the importer
+
+Run:
+
+```bash
+python3 scripts/register_openemr_client.py
+```
+
+The output includes a timestamped client name similar to:
+
+```text
+Maple Grove Synthea Importer 2026-07-24 21:15 EDT
+```
+
+In the **same OpenEMR installation selected in Step 8**, open:
+
+```text
+Administration -> System -> API Clients
+```
+
+Find the newest matching timestamped client, enable it, and save.
+
+Do not continue until that newest client is enabled. A `401 invalid_client`
+message usually means the newly registered client has not been enabled yet.
+
+### 11. Log in for this terminal session
+
+Run:
+
+```bash
+source scripts/openemr_session.sh
+```
+
+The word `source` is required. It allows later commands in this terminal to use
+the login without repeatedly asking for the password.
+
+#### Local Docker login
+
+The script offers the usual local demo login:
+
+```text
+admin / pass
+```
+
+Choose the custom-login option instead if you changed those credentials.
+
+#### AWS/shared-server login
+
+Enter the username and password assigned to you. The password remains invisible
+while you type; that is normal.
+
+The password is not saved in the project folder. It stays only in the current
+terminal session and disappears when the terminal closes or when you run:
+
+```bash
+openemr_logout
+```
+
+Only the non-secret username is remembered locally.
+
+If you typed the wrong password, simply run this again to replace the terminal
+login:
+
+```bash
+source scripts/openemr_session.sh
+```
+
+### 12. Test the connection
+
+Run:
 
 ```bash
 python3 scripts/test_openemr_connection.py
 ```
 
-Do not continue until the connection test succeeds.
+Expected ending:
 
-### 7. Preflight and import
+```text
+OpenEMR connection test passed.
+```
 
-First run the safe preflight. It creates no OpenEMR records:
+Do not continue until the test passes.
+
+Common causes of failure:
+
+- `invalid_client`: enable the newest timestamped API client in OpenEMR;
+- `invalid_grant` or login failure: rerun `source scripts/openemr_session.sh`
+  and carefully re-enter the username/password;
+- wrong server: rerun `python3 scripts/configure_openemr_target.py`, then
+  register and enable a client on that server;
+- no eligible provider pool: check that a non-admin provider is Active,
+  Authorized, assigned to a facility, and has a unique synthetic 10-digit NPI.
+
+### 13. Preview the import safely
+
+Run the preflight first:
 
 ```bash
 python3 scripts/import_openemr.py
 ```
 
-Then import the selected dataset:
+This checks the selected dataset and prints the planned import steps. It does
+**not** create OpenEMR records.
+
+### 14. Import the dataset
+
+Run:
 
 ```bash
 python3 scripts/import_openemr.py \
@@ -179,37 +419,80 @@ python3 scripts/import_openemr.py \
   --progress-every 100
 ```
 
-Run the same import command again to test duplicate protection. Previously
-tracked records should be skipped rather than duplicated.
+The normal workflow imports, in dependency order:
 
-### 8. Check the imported records
+1. patients;
+2. encounters and provider/facility mappings;
+3. curated conditions;
+4. curated allergies;
+5. medications; and
+6. supported vital signs.
 
-Inspect several OpenEMR patients for:
+Keep the terminal open until the command finishes.
 
-- demographics
-- encounters
-- medical problems
-- allergies
-- medications
-- vital signs
+### 15. Confirm duplicate protection
 
-Missing OpenEMR allergy reaction options automatically fall back to
-`unassigned`.
+Run the exact same import command again:
 
-## Supported import workflow
+```bash
+python3 scripts/import_openemr.py \
+  --commit \
+  --quiet \
+  --progress-every 100
+```
 
-The normal import runs these resources in dependency order:
+Previously imported records should be skipped rather than created again.
 
-1. patients
-2. encounters, including facility and provider mappings
-3. curated conditions
-4. curated allergies
-5. medications
-6. supported vital signs
+### 16. Inspect the imported records
 
-Re-running the same dataset safely skips records already tracked as imported.
-Local credentials, dataset and target binding, and resumable maps stay under
-`.local/` and must not be committed.
+Open several patient charts in OpenEMR and check:
+
+- demographics;
+- encounters;
+- medical problems;
+- allergies;
+- medications; and
+- vital signs.
+
+Missing OpenEMR allergy-reaction options may be stored as `unassigned`.
+
+## Returning to the project later
+
+For the same dataset and same OpenEMR server, the normal returning workflow is:
+
+```bash
+cd maple-grove-synthea-openemr
+source .venv/bin/activate
+source scripts/openemr_session.sh
+python3 scripts/test_openemr_connection.py
+```
+
+Then run whichever generation or import command you need.
+
+## Switching servers or starting over
+
+### Re-enter only the password
+
+This is safe and does not reset import tracking:
+
+```bash
+source scripts/openemr_session.sh
+```
+
+### Completely reset this repo's saved local state
+
+Only do this before a clean test or when an instructor/maintainer tells you to.
+It forgets the selected server, OAuth client, remembered username, and all local
+import maps:
+
+```bash
+openemr_logout 2>/dev/null || true; rm -rf .local
+python3 scripts/configure_openemr_target.py
+```
+
+This does **not** delete records already inside OpenEMR. Deleting the local maps
+and then re-importing into the same populated server may weaken duplicate
+protection. Use a fresh/reset OpenEMR instance for a true clean test.
 
 ## Common commands
 
@@ -219,7 +502,13 @@ Generate a larger dataset:
 python3 scripts/generate_gta_patients.py --population 100
 ```
 
-Import only one supported resource:
+List supported and intentionally unsupported resources:
+
+```bash
+python3 scripts/import_openemr.py --list-resources
+```
+
+Import only one resource:
 
 ```bash
 python3 scripts/import_openemr.py \
@@ -228,10 +517,10 @@ python3 scripts/import_openemr.py \
   --quiet
 ```
 
-List supported and intentionally unsupported resources:
+Inspect facilities and providers visible through the API:
 
 ```bash
-python3 scripts/import_openemr.py --list-resources
+python3 scripts/inspect_openemr_resources.py
 ```
 
 View all importer options:
@@ -240,61 +529,44 @@ View all importer options:
 python3 scripts/import_openemr.py --help
 ```
 
-## Dataset selection and local state
+## Local files and privacy
 
-Normally, `scripts/import_openemr.py` uses the dataset selected by
-`output/current-dataset.json`.
+The project stores private working state under `.local/`, including:
 
-To select an existing dataset explicitly:
+- the selected OpenEMR target;
+- OAuth client registration details;
+- the remembered username; and
+- resumable import maps.
 
-```bash
-python3 scripts/import_openemr.py \
-  --csv-dir output/gta-100-v2/csv
-```
+The OpenEMR user password is not written there. It stays in the terminal session
+only.
 
-If multiple datasets exist and no current manifest selects one, the importer
-stops instead of guessing.
+Never commit:
 
-Development maps created before dataset and target binding can be adopted once,
-after verifying they belong to the selected CSV files and OpenEMR target:
+- `.local/`;
+- generated datasets under `output/`;
+- `.venv/`;
+- downloaded JARs under `dist/`;
+- `.env` files;
+- passwords, access tokens, client secrets, or private certificates.
 
-```bash
-python3 scripts/import_openemr.py \
-  --csv-dir output/gta-100-v2/csv \
-  --adopt-existing-state
-```
+## Supported and deferred records
 
-Do not reuse `.local/` import maps with a different generated dataset or a
-different OpenEMR installation.
+The supported workflow imports patients, encounters, curated conditions,
+curated allergies, medications, and selected vital signs.
 
-## Unsupported or deferred resources
-
-The installed OpenEMR API does not provide a suitable writable endpoint for
+The installed OpenEMR APIs do not provide a suitable writable destination for
 complete Synthea procedure, immunization, care-plan, device, imaging-study, or
-supply resources. A narrow surgery endpoint exists, but a curated surgery
-subset is deferred and is not treated as complete procedure coverage.
-Financial and insurance CSV files are outside the current clinical import
-scope.
+supply resources. Financial and insurance CSV files are also outside the current
+clinical import scope. Unsupported records are not forced into unrelated
+OpenEMR features merely to claim import coverage.
 
-Unsupported records are not redirected into unrelated OpenEMR features merely
-to claim import coverage.
+## Additional documentation
 
-## More documentation
-
-- [`docs/STUDENT_SETUP.md`](docs/STUDENT_SETUP.md) - detailed setup help
-- [`docs/IMPORT_QUICK_REFERENCE.md`](docs/IMPORT_QUICK_REFERENCE.md) - importer command reference
-- [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) - current implementation state
-- [`docs/OPENEMR_API_NOTES.md`](docs/OPENEMR_API_NOTES.md) - OpenEMR API findings
-- [`docs/PROJECT_HISTORY.md`](docs/PROJECT_HISTORY.md) - project background and decisions
-- [`docs/SYNTHEA_GTA_BUILD.md`](docs/SYNTHEA_GTA_BUILD.md) - GTA Synthea build details
-- [`docs/openemr-vitals-api-compatibility.md`](docs/openemr-vitals-api-compatibility.md) - local vitals compatibility notes
-
-## Repository hygiene
-
-Do not commit:
-
-- generated datasets under `output/`
-- local credentials and import state under `.local/`
-- Python virtual environments and cache directories
-- downloaded or built JAR files under `dist/`
-- `.env` files, API credentials, access tokens, or private certificates
+- [`docs/STUDENT_SETUP.md`](docs/STUDENT_SETUP.md) — extra help installing tools and opening the project
+- [`docs/IMPORT_QUICK_REFERENCE.md`](docs/IMPORT_QUICK_REFERENCE.md) — compact command reference after setup
+- [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) — current implementation and validation state
+- [`docs/OPENEMR_API_NOTES.md`](docs/OPENEMR_API_NOTES.md) — API findings and limitations
+- [`docs/PROJECT_HISTORY.md`](docs/PROJECT_HISTORY.md) — project background and decisions
+- [`docs/SYNTHEA_GTA_BUILD.md`](docs/SYNTHEA_GTA_BUILD.md) — GTA Synthea build details
+- [`docs/openemr-vitals-api-compatibility.md`](docs/openemr-vitals-api-compatibility.md) — exact local OpenEMR 8 vitals compatibility notes

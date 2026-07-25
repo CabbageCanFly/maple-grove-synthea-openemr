@@ -20,9 +20,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
-import urllib3
 
 from detect_openemr import detect
+from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
 
 
@@ -118,38 +118,59 @@ def response_records(response: requests.Response, label: str) -> list[dict[str, 
 
 
 def api_get_records(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     path: str,
     params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    response = requests.get(
+    response = session.get(
         f"{api_base_url}/{path}",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
         params=params,
-        verify=False,
         timeout=30,
     )
+    # OpenEMR 7 may return HTTP 404 with an empty response when a
+    # patient has no encounters. Treat only that specific response as
+    # an empty encounter collection so creation can continue.
+    if (
+        response.status_code == 404
+        and path.startswith("patient/")
+        and path.endswith("/encounter")
+    ):
+        try:
+            body = response.json()
+        except requests.JSONDecodeError:
+            body = None
+
+        if (
+            isinstance(body, dict)
+            and not (body.get("validationErrors") or [])
+            and not (body.get("internalErrors") or [])
+            and body.get("data") in (None, [], {})
+        ):
+            return []
+
     return response_records(response, f"GET {path}")
 
 
 def api_post_record(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     path: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    response = requests.post(
+    response = session.post(
         f"{api_base_url}/{path}",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         },
         json=payload,
-        verify=False,
         timeout=30,
     )
     records = response_records(response, f"POST {path}")
@@ -261,7 +282,37 @@ def facility_label(facility: dict[str, Any]) -> str:
     )
 
 
+def provider_setup_help(
+    practitioner_count: int,
+    facilities: list[dict[str, Any]],
+) -> str:
+    """Return actionable setup guidance for an empty provider pool."""
+    choices = ", ".join(
+        facility_label(item)
+        for item in facilities
+    )
+
+    return (
+        "\n\nOpenEMR provider setup checklist:\n"
+        "  1. In OpenEMR, open Administration -> Users.\n"
+        "  2. Create or edit at least one non-admin provider account.\n"
+        "  3. Make the provider Active and Authorized.\n"
+        "  4. Assign the provider to one of these facilities: "
+        f"{choices}.\n"
+        "  5. Fill in the provider's NPI field. For this fictional "
+        "Canadian demo, use a unique synthetic 10-digit placeholder, "
+        "such as 0000000001 or 0000000002. Never use a real "
+        "provider's NPI.\n"
+        "  6. Save the provider, then rerun the same import command.\n"
+        f"\nThe Practitioner API returned {practitioner_count} "
+        "provider record(s). In the OpenEMR versions tested for this "
+        "project, a manually created provider may not appear through "
+        "the Practitioner API until its NPI field is populated."
+    )
+
+
 def get_target_resources(
+    session: requests.Session,
     api_base_url: str,
     token: str,
     facility_id: int | None,
@@ -272,12 +323,14 @@ def get_target_resources(
     """Select a safe facility and provider pool from the target OpenEMR."""
 
     facilities = api_get_records(
+        session,
         api_base_url,
         token,
         "facility",
         {"_count": 1000, "_offset": 0},
     )
     practitioners = api_get_records(
+        session,
         api_base_url,
         token,
         "practitioner",
@@ -379,10 +432,12 @@ def get_target_resources(
                     facility_label(item) for item in available
                 )
                 raise RuntimeError(
-                    "No facility has an eligible provider pool. Create at least "
-                    "one active, authorized non-admin provider assigned to a "
-                    "facility. The provider must be visible through the "
-                    f"Practitioner API. Available facilities: {choices}"
+                    "No facility has an eligible provider pool. "
+                    f"Available facilities: {choices}"
+                    + provider_setup_help(
+                        len(practitioners),
+                        available,
+                    )
                 )
             else:
                 choices = ", ".join(
@@ -422,8 +477,11 @@ def get_target_resources(
 
         raise RuntimeError(
             "No active authorized provider accounts were found at "
-            f"{facility_label(selected)}.{filter_note} "
-            "Create or enable at least one provider assigned to this facility."
+            f"{facility_label(selected)}.{filter_note}"
+            + provider_setup_help(
+                len(practitioners),
+                available,
+            )
         )
 
     return selected, provider_pool, selection_strategy
@@ -518,6 +576,16 @@ def ensure_source_mappings(
     return organization_map, provider_map
 
 
+def openemr_external_id(synthea_encounter_id: str) -> str:
+    """Return a stable identifier that fits OpenEMR 7 external_id."""
+    digest = hashlib.sha256(
+        synthea_encounter_id.encode("utf-8")
+    ).hexdigest()
+
+    # "mg-" plus 18 hexadecimal characters = 21 characters.
+    return f"mg-{digest[:18]}"
+
+
 def build_payload(
     row: dict[str, str],
     organization_map: dict[str, Any],
@@ -542,7 +610,9 @@ def build_payload(
         "pc_catid": pc_catid,
         "class_code": class_code,
         "sensitivity": "normal",
-        "external_id": clean(row.get("Id")),
+        "external_id": openemr_external_id(
+            clean(row.get("Id"))
+        ),
     }
 
 
@@ -671,8 +741,8 @@ def main() -> int:
                 "OpenEMR mapping. First missing ID: " + missing_patients[0]
             )
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         openemr = detect()
+        session = create_openemr_session(openemr)
         client = load_json(CLIENT_FILE, {})
         if client.get("base_url") != openemr["base_url"]:
             raise RuntimeError(
@@ -681,6 +751,7 @@ def main() -> int:
 
         token = get_access_token(client)
         facility, provider_pool, facility_selection = get_target_resources(
+            session,
             openemr["api_base_url"],
             token,
             args.facility_id,
@@ -811,6 +882,7 @@ def main() -> int:
             try:
                 if patient_uuid not in existing_encounters_by_patient:
                     existing_encounters_by_patient[patient_uuid] = api_get_records(
+                        session,
                         openemr["api_base_url"],
                         token,
                         f"patient/{patient_uuid}/encounter",
@@ -821,14 +893,22 @@ def main() -> int:
                     (
                         item
                         for item in existing
-                        if clean(str(item.get("external_id"))) == source_encounter_id
+                        if clean(str(item.get("external_id")))
+                        == openemr_external_id(source_encounter_id)
                     ),
                     None,
                 )
                 if matched is not None:
                     encounter_map[source_encounter_id] = {
-                        "openemr_encounter_id": matched.get("eid") or matched.get("id"),
-                        "openemr_encounter_uuid": matched.get("euuid") or matched.get("uuid"),
+                        "openemr_encounter_id": (
+                            matched.get("eid")
+                            or matched.get("id")
+                            or matched.get("encounter")
+                        ),
+                        "openemr_encounter_uuid": (
+                            matched.get("euuid")
+                            or matched.get("uuid")
+                        ),
                         "openemr_patient_uuid": patient_uuid,
                         "status": "discovered-existing",
                     }
@@ -846,6 +926,7 @@ def main() -> int:
                     args.timezone,
                 )
                 created_encounter = api_post_record(
+                    session,
                     openemr["api_base_url"],
                     token,
                     f"patient/{patient_uuid}/encounter",
@@ -860,13 +941,24 @@ def main() -> int:
             encounter_id = (
                 created_encounter.get("eid")
                 or created_encounter.get("id")
-                or "created"
+                or created_encounter.get("encounter")
             )
             encounter_uuid = (
                 created_encounter.get("euuid")
                 or created_encounter.get("uuid")
                 or ""
             )
+
+            if not str(encounter_id or "").isdigit():
+                print(
+                    f"FAILED {label}: OpenEMR created the encounter "
+                    "but did not return a numeric encounter ID. "
+                    f"Response: {json.dumps(created_encounter)}",
+                    file=sys.stderr,
+                )
+                failed += 1
+                print_progress()
+                continue
 
             encounter_map[source_encounter_id] = {
                 "openemr_encounter_id": encounter_id,
