@@ -282,6 +282,35 @@ def facility_label(facility: dict[str, Any]) -> str:
     )
 
 
+def provider_setup_help(
+    practitioner_count: int,
+    facilities: list[dict[str, Any]],
+) -> str:
+    """Return actionable setup guidance for an empty provider pool."""
+    choices = ", ".join(
+        facility_label(item)
+        for item in facilities
+    )
+
+    return (
+        "\n\nOpenEMR provider setup checklist:\n"
+        "  1. In OpenEMR, open Administration -> Users.\n"
+        "  2. Create or edit at least one non-admin provider account.\n"
+        "  3. Make the provider Active and Authorized.\n"
+        "  4. Assign the provider to one of these facilities: "
+        f"{choices}.\n"
+        "  5. Fill in the provider's NPI field. For this fictional "
+        "Canadian demo, use a unique synthetic 10-digit placeholder, "
+        "such as 0000000001 or 0000000002. Never use a real "
+        "provider's NPI.\n"
+        "  6. Save the provider, then rerun the same import command.\n"
+        f"\nThe Practitioner API returned {practitioner_count} "
+        "provider record(s). In the OpenEMR versions tested for this "
+        "project, a manually created provider may not appear through "
+        "the Practitioner API until its NPI field is populated."
+    )
+
+
 def get_target_resources(
     api_base_url: str,
     token: str,
@@ -400,10 +429,12 @@ def get_target_resources(
                     facility_label(item) for item in available
                 )
                 raise RuntimeError(
-                    "No facility has an eligible provider pool. Create at least "
-                    "one active, authorized non-admin provider assigned to a "
-                    "facility. The provider must be visible through the "
-                    f"Practitioner API. Available facilities: {choices}"
+                    "No facility has an eligible provider pool. "
+                    f"Available facilities: {choices}"
+                    + provider_setup_help(
+                        len(practitioners),
+                        available,
+                    )
                 )
             else:
                 choices = ", ".join(
@@ -443,8 +474,11 @@ def get_target_resources(
 
         raise RuntimeError(
             "No active authorized provider accounts were found at "
-            f"{facility_label(selected)}.{filter_note} "
-            "Create or enable at least one provider assigned to this facility."
+            f"{facility_label(selected)}.{filter_note}"
+            + provider_setup_help(
+                len(practitioners),
+                available,
+            )
         )
 
     return selected, provider_pool, selection_strategy
