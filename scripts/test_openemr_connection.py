@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Authenticate to local OpenEMR and perform a read-only patient request."""
+"""Test authentication and API access to the selected OpenEMR."""
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -12,6 +11,7 @@ import requests
 import urllib3
 
 from detect_openemr import detect
+from openemr_auth import request_access_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,85 +22,93 @@ def main() -> int:
     try:
         if not CLIENT_FILE.is_file():
             raise RuntimeError(
-                "OAuth client credentials were not found. "
-                "Run register_openemr_client.py first."
+                "No registered OAuth client was found.\n"
+                "Run:\n"
+                "  python3 scripts/register_openemr_client.py"
             )
 
-        client = json.loads(CLIENT_FILE.read_text(encoding="utf-8"))
-        openemr = detect()
-
-        if client.get("base_url") != openemr["base_url"]:
-            raise RuntimeError(
-                "The saved OAuth client belongs to a different OpenEMR URL."
-            )
-
-        username = os.getenv("OPENEMR_USERNAME", "admin")
-        password = os.getenv("OPENEMR_PASSWORD", "pass")
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-        token_response = requests.post(
-            client["token_endpoint"],
-            data={
-                "grant_type": "password",
-                "client_id": client["client_id"],
-                "client_secret": client["client_secret"],
-                "scope": client["scope"],
-                "user_role": "users",
-                "username": username,
-                "password": password,
-            },
-            verify=False,
-            timeout=30,
+        client = json.loads(
+            CLIENT_FILE.read_text(encoding="utf-8")
         )
 
-        if not token_response.ok:
+        openemr = detect()
+
+        client_base_url = str(
+            client.get("base_url") or ""
+        ).rstrip("/")
+
+        selected_base_url = str(
+            openemr["base_url"]
+        ).rstrip("/")
+
+        if (
+            client_base_url
+            and client_base_url != selected_base_url
+        ):
             raise RuntimeError(
-                f"Token request returned HTTP {token_response.status_code}:\n"
-                f"{token_response.text[:1000]}"
+                "The saved OAuth client belongs to another "
+                "OpenEMR server.\n"
+                "Remove it and register a new client:\n"
+                "  rm -f .local/openemr-client.json\n"
+                "  python3 scripts/register_openemr_client.py"
             )
 
-        token_data = token_response.json()
-        access_token = token_data.get("access_token")
+        access_token, username = request_access_token(
+            client,
+            openemr,
+        )
 
-        if not access_token:
-            raise RuntimeError("OpenEMR did not return an access token.")
+        verify_tls = bool(
+            openemr.get("verify_tls", True)
+        )
 
-        patient_response = requests.get(
+        if not verify_tls:
+            urllib3.disable_warnings(
+                urllib3.exceptions.InsecureRequestWarning
+            )
+
+        response = requests.get(
             f"{openemr['api_base_url']}/patient",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
             },
-            verify=False,
+            verify=verify_tls,
             timeout=30,
         )
 
-        if not patient_response.ok:
+        if not response.ok:
             raise RuntimeError(
-                f"Patient request returned HTTP {patient_response.status_code}:\n"
-                f"{patient_response.text[:1000]}"
+                f"The patient API returned HTTP "
+                f"{response.status_code}:\n"
+                f"{response.text[:1000]}"
             )
 
-        body = patient_response.json()
+        body = response.json()
         patients = body.get("data", [])
 
-        print("OpenEMR connection test passed")
-        print(f"  OpenEMR version: {openemr['version']}")
-        print(f"  Base URL: {openemr['base_url']}")
-        print(f"  Authenticated user: {username}")
-        print(f"  Patient API status: {patient_response.status_code}")
-        print(f"  Existing patients returned: {len(patients)}")
-        print("  Access token was not printed or saved.")
+        if not isinstance(patients, list):
+            patients = []
+
+        print()
+        print("OpenEMR connection test passed.")
+        print(f"  Server: {openemr['base_url']}")
+        print(f"  Logged in as: {username}")
+        print(f"  Patient records returned: {len(patients)}")
+        print("  Password was not saved.")
 
         return 0
 
     except (
         RuntimeError,
+        OSError,
+        ValueError,
         requests.RequestException,
-        json.JSONDecodeError,
     ) as error:
-        print(f"Connection test failed: {error}", file=sys.stderr)
+        print(
+            f"Connection test failed:\n{error}",
+            file=sys.stderr,
+        )
         return 1
 
 

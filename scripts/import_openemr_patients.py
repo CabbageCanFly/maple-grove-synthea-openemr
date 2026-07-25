@@ -15,6 +15,7 @@ import requests
 import urllib3
 
 from detect_openemr import detect
+from openemr_auth import request_access_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,38 +101,12 @@ def save_json(path: Path, value: Any) -> None:
         pass
 
 
-def get_access_token(client: dict[str, Any]) -> str:
-    username = os.getenv("OPENEMR_USERNAME", "admin")
-    password = os.getenv("OPENEMR_PASSWORD", "pass")
-
-    response = requests.post(
-        client["token_endpoint"],
-        data={
-            "grant_type": "password",
-            "client_id": client["client_id"],
-            "client_secret": client["client_secret"],
-            "scope": client["scope"],
-            "user_role": "users",
-            "username": username,
-            "password": password,
-        },
-        verify=False,
-        timeout=30,
-    )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Token request returned HTTP {response.status_code}: "
-            f"{response.text[:500]}"
-        )
-
-    token = response.json().get("access_token")
-
-    if not token:
-        raise RuntimeError("OpenEMR did not return an access token.")
-
-    return token
-
+def get_access_token(
+    client: dict[str, Any],
+) -> str:
+    """Authenticate using the selected OpenEMR login."""
+    access_token, _ = request_access_token(client)
+    return access_token
 
 def get_existing_patients(
     api_base_url: str,

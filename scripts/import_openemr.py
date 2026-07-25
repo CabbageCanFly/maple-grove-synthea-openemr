@@ -24,6 +24,8 @@ from urllib.parse import urlparse
 from import_openemr_patients import get_access_token, load_json, save_json
 
 
+from openemr_auth import authenticated_subprocess_environment
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
 CURRENT_DATASET_FILE = ROOT / "output/current-dataset.json"
@@ -803,6 +805,14 @@ def run_resources(
     completed: list[tuple[str, float]] = []
     started_all = time.monotonic()
 
+    # A committed import needs OpenEMR credentials. Collect them
+    # once here and privately pass them to every resource importer.
+    child_environment = (
+        authenticated_subprocess_environment()
+        if "--commit" in sys.argv
+        else None
+    )
+
     for position, resource in enumerate(resources, start=1):
         if resource.name == "vitals":
             maybe_prepare_local_vitals(
@@ -825,7 +835,12 @@ def run_resources(
         sys.stdout.flush()
 
         started = time.monotonic()
-        result = subprocess.run(command, cwd=ROOT, check=False)
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            env=child_environment,
+        )
         elapsed = time.monotonic() - started
 
         if result.returncode != 0:
