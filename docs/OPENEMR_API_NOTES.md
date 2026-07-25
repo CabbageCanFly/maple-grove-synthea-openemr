@@ -1,5 +1,21 @@
 # OpenEMR API Notes
 
+## Validated targets
+
+The detailed endpoint notes below were originally gathered against local OpenEMR
+8.0.0.3. The supported importer has since also completed a clean end-to-end test
+against AWS OpenEMR 7.0.2 patch 0.
+
+Compatibility behavior now isolated in the client includes:
+
+- automatic OAuth capability detection for OpenEMR 7 versus 8 scope formats;
+- OpenEMR 7 encounter creation responses using `encounter` and `uuid` identifiers;
+- OpenEMR 7 empty encounter collection responses returned as HTTP 404;
+- OpenEMR 7 allergy begin dates requiring a date-time value;
+- the known OpenEMR 7.0.2 allergy API limitation that may drop reaction/severity;
+- target-specific TLS certificate verification shared by every HTTP request; and
+- secure local/remote username and password prompting, with optional terminal-session reuse.
+
 These notes record behavior confirmed against the project's local OpenEMR 8.0.0.3 environment.
 
 ## Medication-list API

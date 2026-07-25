@@ -40,12 +40,14 @@ All imported records are synthetic. Never use real patient information.
 
 ### Shared class environment
 
-- OpenEMR 7 on AWS
-- URL and site are non-secret target configuration
-- Do not store AWS usernames, passwords, client secrets, or access tokens in Git
-- Credentials must come from environment variables or a secure prompt
-- Docker access may not be available to students
-- Importer must support both OpenEMR 7 and OpenEMR 8 where their APIs overlap
+- OpenEMR 7.0.2 on AWS has been validated through a clean end-to-end import
+- students select the browser URL; the normal `default` site and API generation are detected automatically
+- Docker, SSH, database, and AWS Console access are not required for students
+- assigned usernames and passwords are collected through a secure prompt
+- passwords may be held only in the current terminal session and are not written to project files
+- OAuth client details and remembered usernames stay under ignored `.local/` files
+- do not store usernames, passwords, client secrets, or access tokens in Git
+- the same importer supports OpenEMR 7 and OpenEMR 8 where their APIs overlap
 
 ## Synthea status
 
@@ -91,8 +93,16 @@ Completed locally against OpenEMR 8:
 - Authentication and a read-only patient request were verified
 - Access tokens are not printed or saved
 
-The AWS OpenEMR 7 target must use the same importer where the Standard API is
-compatible, but it must not depend on Docker access.
+Remote-target support is complete for the validated OpenEMR 7.0.2 AWS clone.
+The target configurator asks only for local versus remote and the remote browser
+address, assumes the normal `default` site, detects the API generation from OAuth
+capabilities, and records whether TLS verification is appropriate. Remote imports
+do not depend on Docker access.
+
+Authentication now uses a secure prompt. `openemr_session.sh` can keep the entered
+password in the current terminal environment so repeated test/import commands do
+not ask again. The password is not written to disk. HTTP/TLS behavior is centralized
+and all importer requests respect the selected target's certificate setting.
 
 <!-- BEGIN OAUTH-CLIENT-NAMING-RULES -->
 
@@ -203,6 +213,22 @@ patient count present in any selected generated dataset.
     25-form batch with an all-skipped repeat. Completed the first full 1,503-form pass
     with 1,474 created, 29 skipped, and 0 failed, followed by the complete acceptance
     rerun with 0 created, 1,503 skipped, and 0 failed.
+32. Added a target configurator that supports automatic local Docker detection and
+    remote OpenEMR selection using only the server's browser address.
+33. Added automatic OpenEMR 7-versus-8 OAuth capability detection and isolated scope
+    differences behind compatibility code.
+34. Added secure local/remote login prompting and terminal-session credential reuse;
+    user passwords are not written to project files.
+35. Validated OpenEMR 7.0.2 encounter creation, numeric encounter-ID capture, and
+    downstream vital-sign linkage without server-side modifications.
+36. Added OpenEMR 7 compatibility handling for empty encounter collections, allergy
+    date-time requirements, and the documented reaction/severity API limitation.
+37. Completed a clean first import against an AWS OpenEMR 7.0.2 clone after correcting
+    the required provider/NPI setup.
+38. Centralized HTTP/TLS handling so every API request respects the selected target's
+    certificate-verification setting.
+39. Consolidated the student workflow into the root README and removed the obsolete
+    duplicate quick-start and temporary remote-target branch notes.
 
 The numeric results above describe the current development dataset. They are not
 fixed targets for future student-generated datasets.
@@ -234,7 +260,7 @@ virtual environment.
 Currently verified targets:
 
 - local OpenEMR 8.0.0.3;
-- shared AWS OpenEMR 7, with its exact patch version still to be recorded.
+- AWS OpenEMR 7.0.2 patch 0 through a clean first import and safe rerun workflow.
 
 Version-specific OAuth scopes and API differences must remain isolated behind
 compatibility code.
@@ -273,12 +299,16 @@ deterministically maps Synthea provider UUIDs onto that pool.
 
 <!-- END ENVIRONMENT-AND-PROVIDER-COMPATIBILITY -->
 
-## Current development phase: procedure capability analysis
+## Current development phase: student workflow finalization
 
-Medication and historical vital-sign importing are complete for the current validation
-dataset. The vital importer passed both its first complete import and its complete
-all-skipped acceptance rerun. The procedures source has been audited and is ready for
-OpenEMR destination and write-capability analysis.
+The supported patient, encounter, condition, allergy, medication, and vital-sign
+workflow has now been validated against local OpenEMR 8.0.0.3 and a clean AWS
+OpenEMR 7.0.2 clone. Current work is documentation consolidation, final local/AWS
+smoke testing, and release/merge preparation.
+
+Procedure capability analysis remains documented as a deferred extension because the
+installed APIs do not provide an honest writable destination for complete Synthea
+procedure coverage.
 
 Current observations evidence:
 
@@ -757,8 +787,9 @@ The implemented clinical import scope currently includes:
 - medications;
 - supported vital signs.
 
-The next development phase is final importer orchestration, student workflow
-simplification, and validation of the shared AWS OpenEMR 7 target.
+The remaining release work is final documentation review, one clean local smoke
+test, one clean AWS smoke test, and merge preparation. The shared AWS OpenEMR 7.0.2
+target has already completed the core end-to-end compatibility validation.
 
 <!-- END UNSUPPORTED-CLINICAL-RESOURCES -->
 
@@ -1037,11 +1068,13 @@ To continue the procedures phase without guessing, preserve or provide:
 
 ## Immediate next development step
 
-1. Inspect the exact OpenEMR 8.0.0.3 Standard and FHIR capabilities for creating
-   procedure records before writing any procedure importer.
-2. Select an honest, clinically meaningful procedure scope only if a supported write
-   destination exists; otherwise document procedures as read-only/unsupported for the
-   current API and move to the next resource.
+1. Review the root README from a new student's perspective and remove remaining
+   ambiguity or duplicated setup instructions.
+2. Run one final clean local OpenEMR 8 smoke test and one final clean AWS OpenEMR 7.0.2
+   smoke test using only the documented student workflow.
+3. Merge the feature branch after both tests pass.
+
+Procedure and optional surgery research is deferred until after the student release.
 
 Current `procedures.csv` audit evidence:
 
