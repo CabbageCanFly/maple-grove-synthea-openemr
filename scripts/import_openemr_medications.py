@@ -18,6 +18,7 @@ import requests
 from detect_openemr import detect
 from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
+from import_progress import ImportProgress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -343,7 +344,10 @@ def parse_args() -> argparse.Namespace:
         "--progress-every",
         type=int,
         default=25,
-        help="Print progress every N processed rows; use 0 to disable.",
+        help=(
+            "In quiet mode, print progress every N processed rows; "
+            "use 0 to disable periodic updates."
+        ),
     )
     parser.add_argument(
         "--quiet",
@@ -517,21 +521,14 @@ def main() -> int:
         skipped = 0
         failed = 0
         seeded = 0
-
-        def print_progress() -> None:
-            processed = created + skipped + failed + seeded
-            if args.progress_every == 0:
-                return
-            if (
-                processed % args.progress_every == 0
-                or processed == len(selected_rows)
-            ):
-                print(
-                    f"PROGRESS {processed}/{len(selected_rows)} "
-                    f"(created={created}, seeded={seeded}, "
-                    f"skipped={skipped}, failed={failed})",
-                    flush=True,
-                )
+        progress = ImportProgress(
+            "Medication",
+            "Medications",
+            len(selected_rows),
+            quiet=args.quiet,
+            progress_every=args.progress_every,
+        )
+        progress.start()
 
         for row in selected_rows:
             key = clean(row.get("_source_key"))
@@ -548,20 +545,17 @@ def main() -> int:
             label = f"{title} for {patient_name} [{key[:12]}]"
 
             if not patient_uuid or patient_uuid == "created":
-                print(
-                    f"FAILED {label}: patient mapping has no UUID",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record(
+                    "FAILED",
+                    label,
+                    "patient mapping has no UUID",
+                )
                 continue
 
             if key in medication_map:
-                if not args.quiet:
-                    print(f"SKIP already imported: {label}", flush=True)
                 skipped += 1
-                print_progress()
+                progress.record("SKIPPED", label, "already imported")
                 continue
 
             try:
@@ -597,13 +591,8 @@ def main() -> int:
                 ValueError,
                 requests.RequestException,
             ) as error:
-                print(
-                    f"FAILED {label}: {error}",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record("FAILED", label, str(error))
                 continue
 
             medication_map[key] = {
@@ -637,22 +626,21 @@ def main() -> int:
             save_json(MEDICATION_MAP_FILE, medication_map)
 
             if args.seed_existing_id is not None:
-                if not args.quiet:
-                    print(
-                        f"SEEDED {label}: {created_medication['id']}",
-                        flush=True,
-                    )
                 seeded += 1
+                progress.record(
+                    "SEEDED",
+                    label,
+                    f"OpenEMR ID {created_medication['id']}",
+                )
             else:
-                if not args.quiet:
-                    print(
-                        f"CREATED {label}: {created_medication['id']}",
-                        flush=True,
-                    )
                 created += 1
+                progress.record(
+                    "CREATED",
+                    label,
+                    f"OpenEMR ID {created_medication['id']}",
+                )
 
-            print_progress()
-
+        progress.finish()
         print()
         print("Medication import summary")
         print(f"  Created: {created}")

@@ -16,6 +16,7 @@ import requests
 from detect_openemr import detect
 from openemr_auth import request_access_token
 from openemr_http import create_openemr_session
+from import_progress import ImportProgress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -204,6 +205,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually create patients. Without this, perform a dry run.",
     )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=100,
+        help=(
+            "In quiet mode, print progress every N processed patients; "
+            "use 0 to disable periodic updates."
+        ),
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-patient lines while keeping periodic progress.",
+    )
     return parser.parse_args()
 
 
@@ -217,6 +232,8 @@ def main() -> int:
 
         if args.limit < 1:
             raise RuntimeError("--limit must be at least 1.")
+        if args.progress_every < 0:
+            raise RuntimeError("--progress-every cannot be negative.")
 
         with patients_csv.open(
             newline="",
@@ -279,18 +296,26 @@ def main() -> int:
         created = 0
         skipped = 0
         failed = 0
+        progress = ImportProgress(
+            "Patient",
+            "Patients",
+            len(mapped),
+            quiet=args.quiet,
+            progress_every=args.progress_every,
+        )
+        progress.start()
 
         for synthea_id, patient in mapped:
             label = f"{patient['fname']} {patient['lname']}"
 
             if synthea_id and synthea_id in import_map:
-                print(f"SKIP already imported: {label}")
                 skipped += 1
+                progress.record("SKIPPED", label, "already imported")
                 continue
 
             if duplicate_key(patient) in existing_keys:
-                print(f"SKIP likely duplicate: {label}")
                 skipped += 1
+                progress.record("SKIPPED", label, "likely duplicate")
                 continue
 
             try:
@@ -301,8 +326,8 @@ def main() -> int:
                     patient,
                 )
             except RuntimeError as error:
-                print(f"FAILED {label}: {error}", file=sys.stderr)
                 failed += 1
+                progress.record("FAILED", label, str(error))
                 continue
 
             openemr_identifier = (
@@ -311,8 +336,12 @@ def main() -> int:
                 or "created"
             )
 
-            print(f"CREATED {label}: {openemr_identifier}")
             created += 1
+            progress.record(
+                "CREATED",
+                label,
+                f"OpenEMR ID {openemr_identifier}",
+            )
             existing_keys.add(duplicate_key(patient))
 
             if synthea_id:
@@ -323,8 +352,9 @@ def main() -> int:
                 }
                 save_json(IMPORT_MAP_FILE, import_map)
 
+        progress.finish()
         print()
-        print("Import summary")
+        print("Patient import summary")
         print(f"  Created: {created}")
         print(f"  Skipped: {skipped}")
         print(f"  Failed: {failed}")

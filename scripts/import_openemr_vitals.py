@@ -20,6 +20,7 @@ import requests
 from detect_openemr import detect
 from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
+from import_progress import ImportProgress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -789,7 +790,10 @@ def parse_args() -> argparse.Namespace:
         "--progress-every",
         type=int,
         default=25,
-        help="Print progress every N grouped forms; use 0 to disable.",
+        help=(
+            "In quiet mode, print progress every N grouped forms; "
+            "use 0 to disable periodic updates."
+        ),
     )
     parser.add_argument(
         "--quiet",
@@ -1118,20 +1122,14 @@ def main() -> int:
         duplicate_rows_collapsed = 0
         existing_cache: dict[tuple[int, int], list[dict[str, Any]]] = {}
 
-        def print_progress() -> None:
-            processed = created + skipped + failed
-            if args.progress_every == 0:
-                return
-            if (
-                processed % args.progress_every == 0
-                or processed == len(selected_groups)
-            ):
-                print(
-                    f"PROGRESS {processed}/{len(selected_groups)} "
-                    f"(created={created}, skipped={skipped}, "
-                    f"failed={failed})",
-                    flush=True,
-                )
+        progress = ImportProgress(
+            "Vital form",
+            "Vital forms",
+            len(selected_groups),
+            quiet=args.quiet,
+            progress_every=args.progress_every,
+        )
+        progress.start()
 
         for group in selected_groups:
             key = clean(group["source_key"])
@@ -1157,35 +1155,28 @@ def main() -> int:
             )
 
             if not patient_uuid or patient_uuid == "created":
-                print(
-                    f"FAILED {label}: patient mapping has no UUID",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record(
+                    "FAILED",
+                    label,
+                    "patient mapping has no UUID",
+                )
                 continue
 
             try:
                 openemr_encounter_id = int(raw_encounter_id)
             except (TypeError, ValueError):
-                print(
-                    f"FAILED {label}: encounter mapping has no numeric ID",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record(
+                    "FAILED",
+                    label,
+                    "encounter mapping has no numeric ID",
+                )
                 continue
 
             if key in vital_map:
-                if not args.quiet:
-                    print(
-                        f"SKIP already imported: {label}",
-                        flush=True,
-                    )
                 skipped += 1
-                print_progress()
+                progress.record("SKIPPED", label, "already imported")
                 continue
 
             try:
@@ -1236,13 +1227,8 @@ def main() -> int:
 
             except RuntimeError as error:
                 message = str(error)
-                print(
-                    f"FAILED {label}: {message}",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record("FAILED", label, message)
 
                 if "result is ambiguous" in message:
                     print(
@@ -1255,13 +1241,8 @@ def main() -> int:
 
                 continue
             except (ValueError, requests.RequestException) as error:
-                print(
-                    f"FAILED {label}: {error}",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 failed += 1
-                print_progress()
+                progress.record("FAILED", label, str(error))
                 continue
 
             vital_map[key] = {
@@ -1301,14 +1282,13 @@ def main() -> int:
             )
 
             created += 1
-            if not args.quiet:
-                print(
-                    f"CREATED {label}: {returned_id}",
-                    flush=True,
-                )
+            progress.record(
+                "CREATED",
+                label,
+                f"OpenEMR ID {returned_id}",
+            )
 
-            print_progress()
-
+        progress.finish()
         print()
         print("Vital import summary")
         print(f"  Created: {created}")

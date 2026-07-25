@@ -24,6 +24,7 @@ import requests
 from detect_openemr import detect
 from openemr_http import create_openemr_session
 from import_openemr import get_access_token, load_json, save_json
+from import_progress import ImportProgress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -677,7 +678,15 @@ def parse_args() -> argparse.Namespace:
         "--progress-every",
         type=int,
         default=100,
-        help="Print progress every N processed encounters; use 0 to disable.",
+        help=(
+            "In quiet mode, print progress every N processed encounters; "
+            "use 0 to disable periodic updates."
+        ),
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-encounter lines while keeping periodic progress.",
     )
     return parser.parse_args()
 
@@ -837,19 +846,14 @@ def main() -> int:
         skipped = 0
         failed = 0
         existing_encounters_by_patient: dict[str, list[dict[str, Any]]] = {}
-
-        def print_progress() -> None:
-            processed = created + skipped + failed
-            if args.progress_every == 0:
-                return
-            if (
-                processed % args.progress_every == 0
-                or processed == len(selected_rows)
-            ):
-                print(
-                    f"PROGRESS {processed}/{len(selected_rows)} "
-                    f"(created={created}, skipped={skipped}, failed={failed})"
-                )
+        progress = ImportProgress(
+            "Encounter",
+            "Encounters",
+            len(selected_rows),
+            quiet=args.quiet,
+            progress_every=args.progress_every,
+        )
+        progress.start()
 
         for row in selected_rows:
             source_encounter_id = clean(row.get("Id"))
@@ -868,15 +872,17 @@ def main() -> int:
             )
 
             if not patient_uuid or patient_uuid == "created":
-                print(f"FAILED {label}: patient mapping has no UUID", file=sys.stderr)
                 failed += 1
-                print_progress()
+                progress.record(
+                    "FAILED",
+                    label,
+                    "patient mapping has no UUID",
+                )
                 continue
 
             if source_encounter_id in encounter_map:
-                print(f"SKIP already imported: {label}")
                 skipped += 1
-                print_progress()
+                progress.record("SKIPPED", label, "already imported")
                 continue
 
             try:
@@ -913,9 +919,12 @@ def main() -> int:
                         "status": "discovered-existing",
                     }
                     save_json(ENCOUNTER_MAP_FILE, encounter_map)
-                    print(f"SKIP found existing encounter: {label}")
                     skipped += 1
-                    print_progress()
+                    progress.record(
+                        "SKIPPED",
+                        label,
+                        "found existing OpenEMR encounter",
+                    )
                     continue
 
                 payload = build_payload(
@@ -933,9 +942,8 @@ def main() -> int:
                     payload,
                 )
             except (RuntimeError, ValueError, requests.RequestException) as error:
-                print(f"FAILED {label}: {error}", file=sys.stderr)
                 failed += 1
-                print_progress()
+                progress.record("FAILED", label, str(error))
                 continue
 
             encounter_id = (
@@ -950,14 +958,14 @@ def main() -> int:
             )
 
             if not str(encounter_id or "").isdigit():
-                print(
-                    f"FAILED {label}: OpenEMR created the encounter "
-                    "but did not return a numeric encounter ID. "
-                    f"Response: {json.dumps(created_encounter)}",
-                    file=sys.stderr,
-                )
                 failed += 1
-                print_progress()
+                progress.record(
+                    "FAILED",
+                    label,
+                    "OpenEMR created the encounter but did not return a "
+                    "numeric encounter ID. "
+                    f"Response: {json.dumps(created_encounter)}",
+                )
                 continue
 
             encounter_map[source_encounter_id] = {
@@ -970,10 +978,14 @@ def main() -> int:
                 "status": "created",
             }
             save_json(ENCOUNTER_MAP_FILE, encounter_map)
-            print(f"CREATED {label}: {encounter_uuid or encounter_id}")
             created += 1
-            print_progress()
+            progress.record(
+                "CREATED",
+                label,
+                f"OpenEMR ID {encounter_uuid or encounter_id}",
+            )
 
+        progress.finish()
         print()
         print("Encounter import summary")
         print(f"  Created: {created}")

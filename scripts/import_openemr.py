@@ -25,6 +25,7 @@ from import_openemr_patients import get_access_token, load_json, save_json
 
 
 from openemr_auth import authenticated_subprocess_environment
+from import_progress import format_duration, timestamp
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
@@ -118,6 +119,8 @@ RESOURCE_ORDER: tuple[Resource, ...] = (
         label="Patients",
         script="import_openemr_patients.py",
         csv_arguments=(("--patients-csv", "patients.csv"),),
+        supports_quiet=True,
+        supports_progress=True,
     ),
     Resource(
         name="encounters",
@@ -128,6 +131,7 @@ RESOURCE_ORDER: tuple[Resource, ...] = (
             ("--organizations-csv", "organizations.csv"),
             ("--providers-csv", "providers.csv"),
         ),
+        supports_quiet=True,
         supports_progress=True,
         requires_patient_map=True,
     ),
@@ -219,13 +223,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress per-record messages where the underlying importer supports it.",
+        help="Use compact periodic progress instead of one line per record.",
     )
     parser.add_argument(
         "--progress-every",
         type=int,
         default=100,
-        help="Progress interval passed to supporting importers. Default: 100.",
+        help=(
+            "In quiet mode, print progress every N processed records. "
+            "Default: 100; use 0 to disable periodic updates."
+        ),
     )
     parser.add_argument(
         "--skip-local-vitals-compat",
@@ -829,7 +836,10 @@ def run_resources(
         )
 
         print("\n" + "=" * 72)
-        print(f"STEP {position}/{len(resources)}: {resource.label}")
+        print(
+            f"[{timestamp()}] STEP {position}/{len(resources)}: "
+            f"{resource.label}"
+        )
         print("=" * 72)
         print(f"Command: {safe_command_text(command)}")
         sys.stdout.flush()
@@ -845,21 +855,27 @@ def run_resources(
 
         if result.returncode != 0:
             print(
-                f"\nImport stopped: {resource.label} exited with status "
-                f"{result.returncode} after {elapsed:.1f} seconds.",
+                f"\n[{timestamp()}] Import stopped: {resource.label} "
+                f"exited with status {result.returncode} after "
+                f"{format_duration(elapsed)}.",
                 file=sys.stderr,
             )
             return result.returncode or 1
 
         completed.append((resource.label, elapsed))
+        print(
+            f"[{timestamp()}] Stage {position}/{len(resources)} "
+            f"complete: {resource.label} in {format_duration(elapsed)}",
+            flush=True,
+        )
 
     elapsed_all = time.monotonic() - started_all
     print("\n" + "=" * 72)
-    print("SUPPORTED IMPORT WORKFLOW COMPLETE")
+    print(f"[{timestamp()}] SUPPORTED IMPORT WORKFLOW COMPLETE")
     print("=" * 72)
     for label, elapsed in completed:
-        print(f"  {label}: completed in {elapsed:.1f} seconds")
-    print(f"  Total elapsed: {elapsed_all:.1f} seconds")
+        print(f"  {label}: completed in {format_duration(elapsed)}")
+    print(f"  Total elapsed: {format_duration(elapsed_all)}")
     print("  Access tokens were not printed or saved by the orchestrator.")
     return 0
 
