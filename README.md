@@ -154,8 +154,9 @@ Start with a small dataset so mistakes are quick to correct:
 
 ```bash
 python3 scripts/generate_gta_patients.py \
-  --population 30 \
-  --min-allergies 10
+  --population 12 \
+  --seed 70205 \
+  --min-allergies 4
 ```
 
 The generated CSV files are saved in a new directory below:
