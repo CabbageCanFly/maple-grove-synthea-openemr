@@ -257,11 +257,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--start-new-dataset",
+        "--start-new-import-state",
+        dest="start_new_dataset",
         action="store_true",
         help=(
-            "Archive local import maps belonging to a previous dataset and start "
-            "fresh mapping state for the currently selected dataset. Existing "
-            "OpenEMR records are not deleted."
+            "Archive local import maps belonging to a previous dataset or OpenEMR "
+            "target and start fresh mapping state for the current selection. "
+            "Existing OpenEMR records are not deleted."
         ),
     )
     return parser.parse_args()
@@ -552,7 +554,7 @@ def choose_new_dataset_mode(
     commit: bool,
     requested: bool,
 ) -> bool:
-    """Detect a newly selected dataset and ask before changing local state."""
+    """Detect a changed dataset or OpenEMR target and confirm fresh state."""
 
     if requested:
         return True
@@ -565,8 +567,19 @@ def choose_new_dataset_mode(
     bound_fingerprint = str(
         context.get("dataset_fingerprint") or ""
     )
+    selected_target = client_target()
+    bound_target = str(
+        context.get("openemr_base_url") or ""
+    ).rstrip("/")
 
-    if selected_fingerprint == bound_fingerprint:
+    dataset_changed = selected_fingerprint != bound_fingerprint
+    target_changed = bool(
+        selected_target
+        and bound_target
+        and selected_target != bound_target
+    )
+
+    if not dataset_changed and not target_changed:
         return False
 
     bound_csv = str(
@@ -574,12 +587,24 @@ def choose_new_dataset_mode(
     )
 
     print()
-    print("A different generated dataset is selected.")
-    print(f"  Previous dataset: {bound_csv}")
-    print(f"  New dataset: {csv_dir}")
+    if dataset_changed and target_changed:
+        print("A different generated dataset and OpenEMR target are selected.")
+    elif dataset_changed:
+        print("A different generated dataset is selected.")
+    else:
+        print("A different OpenEMR target is selected.")
+
+    if dataset_changed:
+        print(f"  Previous dataset: {bound_csv}")
+        print(f"  New dataset: {csv_dir}")
+
+    if target_changed:
+        print(f"  Previous target: {bound_target}")
+        print(f"  New target: {selected_target}")
+
     print(
         "The previous local import maps must be archived before "
-        "this new dataset can be imported."
+        "this import can continue."
     )
     print(
         "This does not delete or change records already stored "
@@ -589,19 +614,19 @@ def choose_new_dataset_mode(
     if not commit:
         print(
             "Preflight will continue. When you rerun with --commit, "
-            "you will be asked to confirm the new dataset."
+            "you will be asked to confirm the new import state."
         )
         return True
 
     if not sys.stdin.isatty():
         raise RuntimeError(
-            "A new generated dataset is selected. Rerun with "
-            "--start-new-dataset --commit to archive the previous "
+            "A different dataset or OpenEMR target is selected. Rerun with "
+            "--start-new-import-state --commit to archive the previous "
             "local maps and continue."
         )
 
     answer = input(
-        "Start importing this new dataset? [y/N]: "
+        "Start a new import state for this selection? [y/N]: "
     ).strip().casefold()
 
     if answer in {"y", "yes"}:
@@ -618,7 +643,7 @@ def prepare_new_dataset_state(
     commit: bool,
     enabled: bool,
 ) -> bool:
-    """Prepare state for another generated dataset.
+    """Prepare fresh state for a changed dataset or OpenEMR target.
 
     Return True when preflight should skip the normal context validator because
     the existing state would be archived during the corresponding commit run.
@@ -640,22 +665,17 @@ def prepare_new_dataset_state(
         ).rstrip("/")
         selected_target = client_target()
 
-        if (
+        target_changed = bool(
             selected_target
             and bound_target
             and selected_target != bound_target
-        ):
-            raise RuntimeError(
-                "The saved import maps belong to a different OpenEMR "
-                f"target. Bound target: {bound_target}; selected target: "
-                f"{selected_target}. Use separate .local state for each "
-                "OpenEMR installation."
-            )
+        )
+        dataset_changed = bound_fingerprint != selected_fingerprint
 
-        if bound_fingerprint == selected_fingerprint:
+        if not dataset_changed and not target_changed:
             print(
-                "Import state: selected dataset already matches the "
-                "existing import context; no archive is needed."
+                "Import state: selected dataset and OpenEMR target already "
+                "match the existing import context; no archive is needed."
             )
             return False
 
@@ -668,7 +688,7 @@ def prepare_new_dataset_state(
 
     if not commit:
         print(
-            "Import state: previous dataset mappings will be archived "
+            "Import state: previous import mappings will be archived "
             "when this command is rerun with --commit."
         )
         return True
